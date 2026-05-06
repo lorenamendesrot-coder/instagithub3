@@ -7,6 +7,7 @@ const NAV = [
   { to: "/agendar",    label: "Agendamentos", icon: "◷"  },
   { to: "/historico",  label: "Histórico",    icon: "≡"  },
   { to: "/aquecimento",label: "Aquecimento",  icon: "🔥" },
+  { to: "/protecao",   label: "Proteção",     icon: "🛡️" },
 ];
 
 export default function Sidebar({ accounts, swStatus, oauthUrl }) {
