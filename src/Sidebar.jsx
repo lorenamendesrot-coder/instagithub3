@@ -3,9 +3,10 @@ import { NavLink } from "react-router-dom";
 
 const NAV = [
   { to: "/",          label: "Contas",       icon: "👤" },
-  { to: "/novo",      label: "Novo post",    icon: "✦"  },
-  { to: "/agendar",   label: "Agendamentos", icon: "◷"  },
-  { to: "/historico", label: "Histórico",    icon: "≡"  },
+  { to: "/novo",        label: "Novo post",    icon: "✦"  },
+  { to: "/agendar",    label: "Agendamentos", icon: "◷"  },
+  { to: "/historico",  label: "Histórico",    icon: "≡"  },
+  { to: "/aquecimento",label: "Aquecimento",  icon: "🔥" },
 ];
 
 export default function Sidebar({ accounts, swStatus, oauthUrl }) {
