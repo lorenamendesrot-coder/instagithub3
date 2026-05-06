@@ -2,7 +2,6 @@
 // Configura rate limit, janela de postagem e warm-up por conta
 import { useState, useEffect } from "react";
 import { useAccounts } from "../useAccounts.js";
-import { dbGet, dbPut } from "../useDB.js";
 
 // ─── Defaults globais (espelham os defaults do publish.mjs) ──────────────────
 const GLOBAL_DEFAULTS = {
@@ -14,21 +13,33 @@ const GLOBAL_DEFAULTS = {
 };
 
 // ─── Hook para carregar/salvar config de proteção no IndexedDB ────────────────
+const STORAGE_KEY = "__protection_config__";
+const LS_KEY = "insta_protection_config";
+
+function loadFromStorage() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return null;
+}
+
+function saveToStorage(cfg) {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(cfg)); } catch {}
+}
+
 function useProtectionConfig() {
   const [config, setConfig] = useState(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    dbGet("sessions", "__protection_config__").then((res) => {
-      setConfig(res?.value || { global: { ...GLOBAL_DEFAULTS }, perAccount: {} });
-    }).catch(() => {
-      setConfig({ global: { ...GLOBAL_DEFAULTS }, perAccount: {} });
-    });
+    const stored = loadFromStorage();
+    setConfig(stored || { global: { ...GLOBAL_DEFAULTS }, perAccount: {} });
   }, []);
 
   const save = async (newConfig) => {
     setSaving(true);
-    await dbPut("sessions", { id: "__protection_config__", value: newConfig });
+    saveToStorage(newConfig);
     setConfig(newConfig);
     setSaving(false);
   };
