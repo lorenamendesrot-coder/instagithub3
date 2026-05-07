@@ -32,7 +32,6 @@ function Avatar({ acc, size = 56 }) {
       <div style={{ width: size, height: size, borderRadius: "50%", background: grad, display: acc.profile_picture ? "none" : "flex", alignItems: "center", justifyContent: "center", fontSize: size * 0.38, fontWeight: 700, color: "#fff", border: "2px solid var(--border2)" }}>
         {initials}
       </div>
-      {/* Indicador de status */}
       <div style={{
         position: "absolute", bottom: 1, right: 1,
         width: 12, height: 12, borderRadius: "50%",
@@ -57,6 +56,208 @@ function StatBox({ label, value, icon }) {
   );
 }
 
+// ── Modal: Adicionar via Page ID ──────────────────────────────────────────────
+function AddViaPageModal({ onClose, onAdded }) {
+  const [pageId,    setPageId]    = useState("");
+  const [pageToken, setPageToken] = useState("");
+  const [loading,   setLoading]   = useState(false);
+  const [error,     setError]     = useState(null);
+  const [preview,   setPreview]   = useState(null); // dados validados antes de confirmar
+
+  const validate = async () => {
+    setError(null);
+    setPreview(null);
+
+    if (!pageId.trim() || !pageToken.trim()) {
+      setError("Preencha o Page ID e o Page Access Token.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res  = await fetch("/api/add-account-via-page", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ page_id: pageId.trim(), page_access_token: pageToken.trim() }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        setError(data.error || "Erro ao validar os dados. Tente novamente.");
+      } else {
+        setPreview(data.account); // mostra prévia para o usuário confirmar
+      }
+    } catch (e) {
+      setError("Erro de rede: " + e.message);
+    }
+    setLoading(false);
+  };
+
+  const confirm = async () => {
+    if (!preview) return;
+    await onAdded(preview);
+    onClose();
+  };
+
+  return (
+    <div
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+      style={{
+        position: "fixed", inset: 0, zIndex: 2500,
+        background: "rgba(0,0,0,0.75)", backdropFilter: "blur(5px)",
+        display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
+      }}
+    >
+      <div style={{
+        background: "var(--bg2)", border: "1px solid var(--border2)",
+        borderRadius: 18, width: "100%", maxWidth: 460,
+        boxShadow: "0 24px 64px rgba(0,0,0,0.7)", overflow: "hidden",
+      }}>
+        {/* Header */}
+        <div style={{ padding: "18px 20px 16px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 16 }}>🔑 Adicionar via Page ID</div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>
+              Use um Page Access Token já existente
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", color: "var(--muted)", fontSize: 22, padding: "0 4px", lineHeight: 1 }}>×</button>
+        </div>
+
+        <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 16 }}>
+
+          {/* Instruções */}
+          <div style={{ padding: "10px 14px", background: "rgba(124,92,252,0.08)", borderRadius: 9, border: "1px solid rgba(124,92,252,0.2)", fontSize: 12, color: "var(--muted)", lineHeight: 1.7 }}>
+            💡 Obtenha seu <strong style={{ color: "var(--text)" }}>Page Access Token</strong> no{" "}
+            <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noreferrer"
+              style={{ color: "var(--accent-light)" }}>Graph API Explorer</a>{" "}
+            ou no Meta Business Suite. O token deve ter permissões{" "}
+            <code style={{ fontSize: 11, background: "var(--bg3)", padding: "1px 5px", borderRadius: 4 }}>
+              instagram_basic
+            </code>{" "}
+            e{" "}
+            <code style={{ fontSize: 11, background: "var(--bg3)", padding: "1px 5px", borderRadius: 4 }}>
+              instagram_content_publish
+            </code>.
+          </div>
+
+          {/* Campo Page ID */}
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", display: "block", marginBottom: 6 }}>
+              Page ID <span style={{ color: "var(--danger)" }}>*</span>
+            </label>
+            <input
+              type="text"
+              value={pageId}
+              onChange={(e) => { setPageId(e.target.value); setPreview(null); setError(null); }}
+              placeholder="Ex: 123456789012345"
+              style={{ width: "100%", boxSizing: "border-box" }}
+              disabled={loading}
+            />
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+              Encontrado em Configurações da Página → Sobre → ID da Página
+            </div>
+          </div>
+
+          {/* Campo Page Access Token */}
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", display: "block", marginBottom: 6 }}>
+              Page Access Token <span style={{ color: "var(--danger)" }}>*</span>
+            </label>
+            <textarea
+              value={pageToken}
+              onChange={(e) => { setPageToken(e.target.value); setPreview(null); setError(null); }}
+              placeholder="EAABs..."
+              style={{ width: "100%", minHeight: 80, fontFamily: "monospace", fontSize: 12, resize: "vertical", boxSizing: "border-box" }}
+              disabled={loading}
+            />
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+              Token de longa duração recomendado (60 dias). O token será renovado automaticamente.
+            </div>
+          </div>
+
+          {/* Erro */}
+          {error && (
+            <div style={{
+              padding: "10px 14px", borderRadius: 8, fontSize: 13,
+              background: "rgba(239,68,68,0.08)", color: "var(--danger)",
+              border: "1px solid rgba(239,68,68,0.2)",
+              display: "flex", alignItems: "flex-start", gap: 8,
+            }}>
+              <span style={{ flexShrink: 0, marginTop: 1 }}>✕</span>
+              <span>{error}</span>
+            </div>
+          )}
+
+          {/* Prévia da conta encontrada */}
+          {preview && (
+            <div style={{
+              padding: "14px", borderRadius: 10,
+              background: "rgba(34,197,94,0.07)", border: "1px solid rgba(34,197,94,0.25)",
+            }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--success)", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                ✓ Conta encontrada — confirme os dados
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                {preview.profile_picture ? (
+                  <img src={preview.profile_picture} alt={preview.username}
+                    style={{ width: 48, height: 48, borderRadius: "50%", objectFit: "cover", border: "2px solid var(--border2)", flexShrink: 0 }} />
+                ) : (
+                  <div style={{ width: 48, height: 48, borderRadius: "50%", background: "linear-gradient(135deg,#7c5cfc,#e040fb)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 20, color: "#fff", flexShrink: 0 }}>
+                    {(preview.username || "?")[0].toUpperCase()}
+                  </div>
+                )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>{preview.name || preview.username}</div>
+                  <div style={{ fontSize: 13, color: "var(--muted)" }}>@{preview.username}</div>
+                  <div style={{ display: "flex", gap: 6, marginTop: 5, flexWrap: "wrap" }}>
+                    <span className="badge badge-purple" style={{ fontSize: 10 }}>{preview.account_type}</span>
+                    {preview.followers_count != null && (
+                      <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                        {fmt(preview.followers_count)} seguidores
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Botões */}
+          <div style={{ display: "flex", gap: 10 }}>
+            {!preview ? (
+              <>
+                <button
+                  className="btn btn-primary"
+                  style={{ flex: 1 }}
+                  onClick={validate}
+                  disabled={loading || !pageId.trim() || !pageToken.trim()}
+                >
+                  {loading
+                    ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Validando...</>
+                    : "Validar e buscar conta"}
+                </button>
+                <button className="btn btn-ghost" onClick={onClose} disabled={loading}>
+                  Cancelar
+                </button>
+              </>
+            ) : (
+              <>
+                <button className="btn btn-primary" style={{ flex: 1 }} onClick={confirm}>
+                  ✓ Confirmar e adicionar
+                </button>
+                <button className="btn btn-ghost" onClick={() => setPreview(null)}>
+                  Corrigir
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Modal detalhes da conta ───────────────────────────────────────────────────
 function AccountDetailModal({ acc, insights, loadingInsights, onClose, onEdit, onRemove }) {
   const status = acc.token_status === "expired" ? { color: "var(--danger)", label: "Token expirado", icon: "🔴" }
@@ -75,12 +276,10 @@ function AccountDetailModal({ acc, insights, loadingInsights, onClose, onEdit, o
         borderRadius: 18, width: "100%", maxWidth: 480,
         boxShadow: "0 24px 64px rgba(0,0,0,0.7)", overflow: "hidden",
       }}>
-        {/* Header com capa gradiente */}
         <div style={{ height: 72, background: "linear-gradient(135deg, #7c5cfc22, #9b4dfc44)", position: "relative", borderBottom: "1px solid var(--border)" }}>
           <button onClick={onClose} style={{ position: "absolute", top: 12, right: 14, background: "none", color: "var(--muted)", fontSize: 20, padding: "0 4px", lineHeight: 1 }}>×</button>
         </div>
 
-        {/* Avatar sobreposto */}
         <div style={{ padding: "0 20px 0", marginTop: -36 }}>
           <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
             <Avatar acc={{ ...acc, account_status: insights?.account_status }} size={72} />
@@ -90,12 +289,16 @@ function AccountDetailModal({ acc, insights, loadingInsights, onClose, onEdit, o
             </div>
           </div>
 
-          {/* Nome e username */}
           <div style={{ marginTop: 10, marginBottom: 14 }}>
             <div style={{ fontWeight: 700, fontSize: 17 }}>{acc.name || acc.username}</div>
             <div style={{ fontSize: 13, color: "var(--muted)" }}>@{acc.username}</div>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
               <span className="badge badge-purple">{acc.account_type || "BUSINESS"}</span>
+              {acc.added_via === "page_id" && (
+                <span className="badge" style={{ fontSize: 10, background: "rgba(245,158,11,0.12)", color: "var(--warning)", border: "1px solid rgba(245,158,11,0.3)" }}>
+                  🔑 via Page ID
+                </span>
+              )}
               <span style={{ fontSize: 11, fontWeight: 600, color: status.color, display: "flex", alignItems: "center", gap: 4 }}>
                 {status.icon} {status.label}
               </span>
@@ -104,7 +307,6 @@ function AccountDetailModal({ acc, insights, loadingInsights, onClose, onEdit, o
         </div>
 
         <div style={{ padding: "0 20px 20px" }}>
-
           {loadingInsights ? (
             <div style={{ textAlign: "center", padding: "28px 0" }}>
               <div className="spinner" style={{ width: 22, height: 22, margin: "0 auto 10px" }} />
@@ -112,28 +314,24 @@ function AccountDetailModal({ acc, insights, loadingInsights, onClose, onEdit, o
             </div>
           ) : insights ? (
             <>
-              {/* Stats */}
               <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
                 <StatBox label="Seguidores"  value={fmt(insights.followers_count)} icon="👥" />
                 <StatBox label="Seguindo"    value={fmt(insights.follows_count)}   icon="➡️" />
                 <StatBox label="Posts"       value={fmt(insights.media_count)}      icon="📸" />
               </div>
 
-              {/* Bio */}
               {insights.biography && (
                 <div style={{ marginBottom: 12, padding: "10px 12px", background: "var(--bg3)", borderRadius: 8, fontSize: 13, color: "var(--text)", lineHeight: 1.6 }}>
                   {insights.biography}
                 </div>
               )}
 
-              {/* Link */}
               {insights.website && (
                 <a href={insights.website} target="_blank" rel="noreferrer" style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "var(--accent-light)", marginBottom: 12, padding: "8px 12px", background: "var(--bg3)", borderRadius: 8 }}>
                   🔗 {insights.website.replace(/^https?:\/\//, "")}
                 </a>
               )}
 
-              {/* Detalhes em grid */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 14 }}>
                 {[
                   { icon: "🗂", label: "Tipo de conta", value: insights.account_type || acc.account_type || "BUSINESS" },
@@ -148,7 +346,6 @@ function AccountDetailModal({ acc, insights, loadingInsights, onClose, onEdit, o
                 ))}
               </div>
 
-              {/* Limite de publicação */}
               {insights.publishing_limit && (
                 <div style={{ marginBottom: 14 }}>
                   <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.05em" }}>
@@ -163,7 +360,6 @@ function AccountDetailModal({ acc, insights, loadingInsights, onClose, onEdit, o
                         {insights.publishing_limit.config?.quota_duration ? `a cada ${insights.publishing_limit.config.quota_duration / 3600}h` : ""}
                       </span>
                     </div>
-                    {/* Barra de progresso */}
                     {insights.publishing_limit.config?.quota_total && (() => {
                       const pct = Math.min(100, Math.round((insights.publishing_limit.quota_usage || 0) / insights.publishing_limit.config.quota_total * 100));
                       const color = pct >= 100 ? "var(--danger)" : pct >= 80 ? "var(--warning)" : "var(--success)";
@@ -182,7 +378,6 @@ function AccountDetailModal({ acc, insights, loadingInsights, onClose, onEdit, o
                 </div>
               )}
 
-              {/* Token status */}
               <div style={{ padding: "9px 12px", background: "var(--bg3)", borderRadius: 8, border: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ fontSize: 13 }}>🔒</span>
                 <div style={{ flex: 1 }}>
@@ -354,25 +549,24 @@ function EditProfileModal({ acc, onClose, onSaved }) {
 
 // ── Página principal ──────────────────────────────────────────────────────────
 export default function Accounts() {
-  const { accounts, removeAccount, clearAllAccounts, loading, reloadAccounts } = useAccounts();
-  const [confirmModal, setConfirmModal] = useState(null);
-  const [editingAcc,   setEditingAcc]   = useState(null);
-  const [detailAcc,    setDetailAcc]    = useState(null);
-  const [insights,     setInsights]     = useState({});   // { [acc.id]: data }
-  const [loadingIns,   setLoadingIns]   = useState({});   // { [acc.id]: bool }
+  const { accounts, removeAccount, clearAllAccounts, loading, reloadAccounts, addAccounts } = useAccounts();
+  const [confirmModal,    setConfirmModal]    = useState(null);
+  const [editingAcc,      setEditingAcc]      = useState(null);
+  const [detailAcc,       setDetailAcc]       = useState(null);
+  const [insights,        setInsights]        = useState({});
+  const [loadingIns,      setLoadingIns]      = useState({});
+  const [showPageIdModal, setShowPageIdModal] = useState(false);
 
   const APP_ID   = import.meta.env.VITE_META_APP_ID;
   const REDIRECT = encodeURIComponent(window.location.origin + "/api/auth-callback");
   const SCOPE    = "instagram_basic,instagram_content_publish,instagram_manage_insights,pages_read_engagement,pages_show_list,pages_manage_posts,business_management,pages_manage_metadata";
   const oauthUrl = `https://www.facebook.com/v21.0/dialog/oauth?client_id=${APP_ID}&redirect_uri=${REDIRECT}&scope=${SCOPE}&response_type=code`;
 
-  // Busca insights — tenta a Netlify Function, com fallback direto à Graph API
   const fetchInsights = useCallback(async (acc, force = false) => {
     if (!force && (loadingIns[acc.id] || insights[acc.id])) return;
-    if (!acc.access_token) return; // token ainda não carregou
+    if (!acc.access_token) return;
     setLoadingIns((p) => ({ ...p, [acc.id]: true }));
     try {
-      // Tenta via Netlify Function primeiro
       let data = null;
       try {
         const res = await fetch("/api/account-insights", {
@@ -390,7 +584,6 @@ export default function Accounts() {
         }
       } catch { /* fallback abaixo */ }
 
-      // Fallback: chama Graph API diretamente do browser
       if (!data) {
         const GRAPH = "https://graph.facebook.com/v21.0";
         const fields = "id,username,name,biography,website,profile_picture_url,account_type,followers_count,follows_count,media_count";
@@ -412,11 +605,20 @@ export default function Accounts() {
             restriction_note: null,
             fetched_at:       new Date().toISOString(),
           };
-          // Persiste username/name/foto atualizados no IndexedDB
-          if (json.username && json.username !== acc.username) {
-            await dbPut("sessions", { ...acc, username: json.username, name: json.name, profile_picture: json.profile_picture_url || acc.profile_picture });
-            reloadAccounts();
-          }
+          // Persiste dados atualizados no IndexedDB
+          const updatedAcc = {
+            ...acc,
+            username:        json.username        || acc.username,
+            name:            json.name            || acc.name,
+            profile_picture: json.profile_picture_url || acc.profile_picture,
+            followers_count: json.followers_count ?? acc.followers_count,
+            follows_count:   json.follows_count   ?? acc.follows_count,
+            media_count:     json.media_count     ?? acc.media_count,
+            biography:       json.biography       || acc.biography || "",
+            website:         json.website         || acc.website   || "",
+          };
+          await dbPut("sessions", updatedAcc);
+          reloadAccounts();
         } else if (json.error?.code === 190) {
           await dbPut("sessions", { ...acc, token_status: "expired" });
           reloadAccounts();
@@ -430,21 +632,17 @@ export default function Accounts() {
     setLoadingIns((p) => ({ ...p, [acc.id]: false }));
   }, [insights, loadingIns, reloadAccounts]);
 
-  // ✅ Busca insights de todas as contas automaticamente ao carregar
   const fetchedRef = useRef(false);
   useEffect(() => {
     if (fetchedRef.current || loading || accounts.length === 0) return;
     fetchedRef.current = true;
-    // Busca em sequência com pequeno delay para não sobrecarregar a API
     accounts.forEach((acc, i) => {
       setTimeout(() => fetchInsights(acc), i * 300);
     });
   }, [accounts, loading]);
 
-  // Abre modal de detalhes (insights já devem estar carregados)
   const openDetail = (acc) => {
     setDetailAcc(acc);
-    // Se por algum motivo não carregou ainda, busca agora
     if (!insights[acc.id] && !loadingIns[acc.id]) fetchInsights(acc);
   };
 
@@ -462,6 +660,13 @@ export default function Accounts() {
     setEditingAcc(null);
   };
 
+  // Chamado pelo AddViaPageModal após o usuário confirmar a prévia
+  const handleAddViaPage = async (account) => {
+    await addAccounts([account]);
+    // Busca insights imediatamente após adicionar
+    setTimeout(() => fetchInsights(account, true), 500);
+  };
+
   if (loading) return (
     <div className="page" style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 300 }}>
       <div className="spinner" style={{ width: 28, height: 28 }} />
@@ -475,15 +680,26 @@ export default function Accounts() {
           <div className="page-title">Contas conectadas</div>
           <div className="page-subtitle">{accounts.length} conta(s) vinculada(s) via Meta API</div>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {accounts.length > 0 && (
             <button className="btn btn-danger btn-sm" onClick={() => setConfirmModal({ type: "clear" })}>
               Remover todas
             </button>
           )}
+          <button className="btn btn-ghost" onClick={() => setShowPageIdModal(true)}>
+            🔑 Adicionar via Page ID
+          </button>
           <a href={oauthUrl} className="btn btn-primary">+ Adicionar conta</a>
         </div>
       </div>
+
+      {/* Modal: adicionar via Page ID */}
+      {showPageIdModal && (
+        <AddViaPageModal
+          onClose={() => setShowPageIdModal(false)}
+          onAdded={handleAddViaPage}
+        />
+      )}
 
       {/* Modal detalhes */}
       {detailAcc && (
@@ -511,7 +727,10 @@ export default function Accounts() {
           <div className="empty-icon">📱</div>
           <div className="empty-title">Nenhuma conta conectada</div>
           <div style={{ fontSize: 13, marginBottom: 24, color: "var(--muted)" }}>Conecte contas Instagram Business ou Creator.</div>
-          <a href={oauthUrl} className="btn btn-primary">+ Conectar primeira conta</a>
+          <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+            <a href={oauthUrl} className="btn btn-primary">+ Conectar via OAuth</a>
+            <button className="btn btn-ghost" onClick={() => setShowPageIdModal(true)}>🔑 Adicionar via Page ID</button>
+          </div>
         </div>
       ) : (
         <>
@@ -533,7 +752,6 @@ export default function Accounts() {
                   style={{ display: "flex", flexDirection: "column", gap: 12, cursor: "pointer" }}
                   onClick={() => openDetail(acc)}
                 >
-                  {/* Header do card — dados do IndexedDB, sempre disponíveis */}
                   <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                     <Avatar acc={{ ...acc, account_status: ins?.account_status }} />
                     <div style={{ flex: 1, minWidth: 0 }}>
@@ -545,12 +763,14 @@ export default function Accounts() {
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 4, flexWrap: "wrap" }}>
                         <span className="badge badge-purple" style={{ fontSize: 10 }}>{acc.account_type || "BUSINESS"}</span>
+                        {acc.added_via === "page_id" && (
+                          <span style={{ fontSize: 10, color: "var(--warning)" }}>🔑</span>
+                        )}
                         <span style={{ fontSize: 10, fontWeight: 600, color: statusColor }}>● {statusLabel}</span>
                       </div>
                     </div>
                   </div>
 
-                  {/* Stats — skeleton enquanto carrega, dados reais depois */}
                   {isLoading && (
                     <div style={{ display: "flex", gap: 6 }}>
                       {["Seguidores", "Seguindo", "Posts"].map((l) => (
@@ -581,7 +801,6 @@ export default function Accounts() {
                     </div>
                   )}
 
-                  {/* Barra de limite de publicação se tiver */}
                   {ins?.publishing_limit?.config?.quota_total && (() => {
                     const pct = Math.min(100, Math.round((ins.publishing_limit.quota_usage || 0) / ins.publishing_limit.config.quota_total * 100));
                     const color = pct >= 100 ? "var(--danger)" : pct >= 80 ? "var(--warning)" : "var(--success)";
