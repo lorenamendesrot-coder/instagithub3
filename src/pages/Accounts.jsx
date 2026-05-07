@@ -56,6 +56,238 @@ function StatBox({ label, value, icon }) {
   );
 }
 
+// ── Mapeia overall (good/warning/danger) → cor/label/ícone ───────────────────
+function healthMeta(overall, tokenExpired) {
+  if (tokenExpired) {
+    return { color: "var(--danger)", bg: "rgba(239,68,68,0.08)", border: "rgba(239,68,68,0.3)", label: "Token expirado", icon: "🔴" };
+  }
+  switch (overall) {
+    case "good":    return { color: "var(--success)", bg: "rgba(34,197,94,0.08)",  border: "rgba(34,197,94,0.3)",  label: "Saudável",  icon: "🟢" };
+    case "warning": return { color: "var(--warning)", bg: "rgba(245,158,11,0.08)", border: "rgba(245,158,11,0.3)", label: "Atenção",   icon: "🟡" };
+    case "danger":  return { color: "var(--danger)",  bg: "rgba(239,68,68,0.08)",  border: "rgba(239,68,68,0.3)",  label: "Crítico",   icon: "🔴" };
+    default:        return { color: "var(--muted)",   bg: "var(--bg3)",            border: "var(--border)",         label: "—",         icon: "⚪" };
+  }
+}
+
+// ── Badge de saúde com score numérico (cards) ────────────────────────────────
+function HealthBadge({ health, tokenExpired, size = "sm" }) {
+  const meta = healthMeta(health?.overall, tokenExpired);
+  const score = tokenExpired ? 0 : (health?.score ?? null);
+  const isLg = size === "lg";
+  return (
+    <div style={{
+      display: "inline-flex", alignItems: "center", gap: isLg ? 6 : 4,
+      padding: isLg ? "4px 10px" : "2px 7px",
+      background: meta.bg, border: `1px solid ${meta.border}`,
+      borderRadius: 999, fontSize: isLg ? 12 : 10, fontWeight: 700,
+      color: meta.color, lineHeight: 1,
+    }}>
+      <span style={{ fontSize: isLg ? 11 : 9 }}>●</span>
+      <span>{meta.label}</span>
+      {score != null && (
+        <span style={{ opacity: 0.75, fontWeight: 600 }}>· {score}</span>
+      )}
+    </div>
+  );
+}
+
+// ── Comparação de reach 7d × 7d anteriores (modal de detalhes) ────────────────
+function ReachComparison({ insights7d, insightsPrev7d, dropPct }) {
+  const reach     = insights7d?.reach ?? 0;
+  const reachPrev = insightsPrev7d?.reach ?? 0;
+  const max       = Math.max(reach, reachPrev, 1);
+  const trendUp   = reach > reachPrev;
+  const arrow     = reach === reachPrev ? "→" : trendUp ? "↑" : "↓";
+  const trendColor = reach === reachPrev ? "var(--muted)"
+                    : trendUp            ? "var(--success)"
+                                         : (dropPct >= 50 ? "var(--danger)" : "var(--warning)");
+  return (
+    <div style={{ background: "var(--bg3)", borderRadius: 8, padding: "10px 12px", border: "1px solid var(--border)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+          Alcance — comparação semanal
+        </span>
+        <span style={{ fontSize: 12, fontWeight: 700, color: trendColor }}>
+          {arrow} {dropPct != null ? (dropPct > 0 ? `-${dropPct}%` : `+${Math.abs(dropPct)}%`) : "—"}
+        </span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {[
+          { label: "Últimos 7d",   value: reach,     color: trendColor },
+          { label: "7d anteriores", value: reachPrev, color: "var(--muted)" },
+        ].map((row) => (
+          <div key={row.label}>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 3 }}>
+              <span style={{ color: "var(--muted)" }}>{row.label}</span>
+              <span style={{ color: "var(--text)", fontWeight: 600 }}>{row.value.toLocaleString("pt-BR")}</span>
+            </div>
+            <div style={{ height: 5, background: "var(--bg)", borderRadius: 4, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${(row.value / max) * 100}%`, background: row.color, borderRadius: 4, transition: "width 0.4s ease" }} />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Health Overview no topo da página ────────────────────────────────────────
+function HealthOverview({ accounts, insights, loadingMap, onRefreshAll, refreshingAll, refreshProgress }) {
+  // Conta cada bucket. Token expirado entra em danger.
+  let good = 0, warning = 0, danger = 0, scored = 0, scoreSum = 0;
+  const criticalAlerts = [];
+
+  for (const acc of accounts) {
+    const ins = insights[acc.id];
+    const tokenExpired = acc.token_status === "expired";
+    const overall = tokenExpired ? "danger" : (ins?.health?.overall || null);
+
+    if (overall === "good")    good++;
+    else if (overall === "warning") warning++;
+    else if (overall === "danger")  danger++;
+
+    if (!tokenExpired && typeof ins?.health?.score === "number") {
+      scoreSum += ins.health.score;
+      scored++;
+    } else if (tokenExpired) {
+      scoreSum += 0;
+      scored++;
+    }
+
+    // Coleta alertas críticos (até 4)
+    if (tokenExpired) {
+      criticalAlerts.push({ username: acc.username, msg: "Token expirado — reconecte." });
+    } else if (ins?.health?.overall === "danger" && ins.health.issues?.length) {
+      criticalAlerts.push({ username: acc.username, msg: ins.health.issues[0] });
+    }
+  }
+
+  const avgScore = scored > 0 ? Math.round(scoreSum / scored) : null;
+  const total = accounts.length;
+  const pendingInsights = accounts.filter((a) => !insights[a.id] && !a.token_status).length;
+
+  const cards = [
+    { key: "good",    label: "Saudáveis", count: good,    color: "var(--success)", bg: "rgba(34,197,94,0.08)",  border: "rgba(34,197,94,0.25)",  icon: "🟢" },
+    { key: "warning", label: "Atenção",   count: warning, color: "var(--warning)", bg: "rgba(245,158,11,0.08)", border: "rgba(245,158,11,0.25)", icon: "🟡" },
+    { key: "danger",  label: "Críticas",  count: danger,  color: "var(--danger)",  bg: "rgba(239,68,68,0.08)",  border: "rgba(239,68,68,0.25)",  icon: "🔴" },
+  ];
+
+  const avgColor = avgScore == null ? "var(--muted)"
+                  : avgScore >= 75   ? "var(--success)"
+                  : avgScore >= 45   ? "var(--warning)"
+                                     : "var(--danger)";
+
+  return (
+    <div style={{ marginBottom: 18, display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* Header com botão refresh */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            Status de Saúde
+          </div>
+          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+            {total} conta(s) monitorada(s)
+            {pendingInsights > 0 && ` · ${pendingInsights} aguardando dados`}
+          </div>
+        </div>
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={onRefreshAll}
+          disabled={refreshingAll || total === 0}
+        >
+          {refreshingAll
+            ? `↻ Atualizando ${refreshProgress.done}/${refreshProgress.total}...`
+            : "↻ Atualizar tudo"}
+        </button>
+      </div>
+
+      {/* Grade: 3 cards de status + card de score médio */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+        gap: 10,
+      }}>
+        {cards.map((c) => (
+          <div key={c.key} style={{
+            padding: "14px 16px",
+            background: c.bg,
+            border: `1px solid ${c.border}`,
+            borderRadius: 12,
+            display: "flex", alignItems: "center", gap: 12,
+          }}>
+            <div style={{ fontSize: 22 }}>{c.icon}</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 24, fontWeight: 800, color: c.color, lineHeight: 1 }}>{c.count}</div>
+              <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                {c.label}
+              </div>
+            </div>
+          </div>
+        ))}
+
+        {/* Card do score médio */}
+        <div style={{
+          padding: "14px 16px",
+          background: "var(--bg2)",
+          border: `1px solid var(--border2)`,
+          borderRadius: 12,
+          display: "flex", alignItems: "center", gap: 12,
+        }}>
+          <div style={{
+            width: 44, height: 44, borderRadius: "50%",
+            background: `conic-gradient(${avgColor} ${(avgScore || 0) * 3.6}deg, var(--bg3) 0deg)`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            position: "relative",
+          }}>
+            <div style={{
+              width: 34, height: 34, borderRadius: "50%", background: "var(--bg2)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 11, fontWeight: 800, color: avgColor,
+            }}>
+              {avgScore ?? "—"}
+            </div>
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: avgColor }}>
+              {avgScore == null ? "Carregando" : avgScore >= 75 ? "Bom" : avgScore >= 45 ? "Regular" : "Ruim"}
+            </div>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+              Score médio
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Lista de alertas críticos (até 3) */}
+      {criticalAlerts.length > 0 && (
+        <div style={{
+          background: "rgba(239,68,68,0.06)",
+          border: "1px solid rgba(239,68,68,0.25)",
+          borderRadius: 10, padding: "10px 14px",
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--danger)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
+            ⚠ Alertas críticos ({criticalAlerts.length})
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {criticalAlerts.slice(0, 3).map((a, i) => (
+              <div key={i} style={{ fontSize: 12, color: "var(--text2)", lineHeight: 1.4 }}>
+                <span style={{ color: "var(--danger)", fontWeight: 700 }}>@{a.username}</span>
+                <span style={{ color: "var(--muted)" }}> — </span>
+                <span>{a.msg}</span>
+              </div>
+            ))}
+            {criticalAlerts.length > 3 && (
+              <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+                + {criticalAlerts.length - 3} alerta(s) adicional(is) — abra cada conta para ver detalhes.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Modal: Adicionar via Page ID ──────────────────────────────────────────────
 function AddViaPageModal({ onClose, onAdded }) {
   const [pageId,    setPageId]    = useState("");
@@ -259,11 +491,11 @@ function AddViaPageModal({ onClose, onAdded }) {
 }
 
 // ── Modal detalhes da conta ───────────────────────────────────────────────────
-function AccountDetailModal({ acc, insights, loadingInsights, onClose, onEdit, onRemove }) {
-  const status = acc.token_status === "expired" ? { color: "var(--danger)", label: "Token expirado", icon: "🔴" }
-    : insights?.account_status === "limited"    ? { color: "var(--danger)",  label: "Limite atingido", icon: "🚫" }
-    : insights?.account_status === "warning"    ? { color: "var(--warning)", label: "Próximo do limite", icon: "⚠️" }
-    : { color: "var(--success)", label: "Ativa", icon: "🟢" };
+function AccountDetailModal({ acc, insights, loadingInsights, onClose, onEdit, onRemove, onRefresh }) {
+  const tokenExpired = acc.token_status === "expired";
+  const health       = insights?.health;
+  const meta         = healthMeta(health?.overall, tokenExpired);
+  const status       = { color: meta.color, label: meta.label, icon: meta.icon };
 
   return (
     <div onClick={(e) => e.target === e.currentTarget && onClose()} style={{
@@ -284,6 +516,9 @@ function AccountDetailModal({ acc, insights, loadingInsights, onClose, onEdit, o
           <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
             <Avatar acc={{ ...acc, account_status: insights?.account_status }} size={72} />
             <div style={{ display: "flex", gap: 7, paddingBottom: 6 }}>
+              <button className="btn btn-ghost btn-sm" onClick={onRefresh} disabled={loadingInsights} title="Atualizar status">
+                {loadingInsights ? "↻" : "↻ Atualizar"}
+              </button>
               <button className="btn btn-ghost btn-sm" onClick={onEdit}>✏️ Editar perfil</button>
               <button className="btn btn-danger btn-sm" onClick={onRemove}>Desconectar</button>
             </div>
@@ -345,6 +580,72 @@ function AccountDetailModal({ acc, insights, loadingInsights, onClose, onEdit, o
                   </div>
                 ))}
               </div>
+
+              {/* ── Resumo de saúde ─────────────────────────────────────── */}
+              {(health || tokenExpired) && (
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      Saúde da conta
+                    </div>
+                    <HealthBadge health={health} tokenExpired={tokenExpired} size="lg" />
+                  </div>
+                  <div style={{ background: "var(--bg3)", borderRadius: 8, padding: "12px 14px", border: "1px solid var(--border)" }}>
+                    {/* Barra de score */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+                      <span style={{ fontSize: 11, color: "var(--muted)" }}>Score</span>
+                      <span style={{ fontSize: 18, fontWeight: 800, color: meta.color }}>
+                        {tokenExpired ? 0 : (health?.score ?? "—")}
+                        <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 500 }}> / 100</span>
+                      </span>
+                    </div>
+                    <div style={{ height: 6, background: "var(--bg)", borderRadius: 4, overflow: "hidden", marginBottom: 10 }}>
+                      <div style={{ height: "100%", width: `${tokenExpired ? 0 : (health?.score ?? 0)}%`, background: meta.color, borderRadius: 4, transition: "width 0.4s ease" }} />
+                    </div>
+
+                    {/* Lista de issues */}
+                    {(tokenExpired || (health?.issues?.length > 0)) ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                        {(tokenExpired ? ["Token de acesso expirado — reconecte a conta."] : health.issues).map((issue, i) => (
+                          <div key={i} style={{
+                            fontSize: 11, color: "var(--text2)", lineHeight: 1.5,
+                            padding: "6px 10px", background: meta.bg, borderRadius: 6,
+                            borderLeft: `2px solid ${meta.color}`,
+                          }}>
+                            {issue}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 11, color: "var(--success)", textAlign: "center", padding: "4px 0" }}>
+                        ✓ Nenhum alerta — conta em boas condições
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Comparação de alcance 7d × 7d anteriores ───────────────── */}
+              {insights.insights_7d && (
+                <div style={{ marginBottom: 14 }}>
+                  <ReachComparison
+                    insights7d={insights.insights_7d}
+                    insightsPrev7d={insights.insights_prev_7d}
+                    dropPct={health?.reach_drop_pct}
+                  />
+                  {/* Métricas adicionais 7d */}
+                  {(insights.insights_7d.profile_views != null || insights.insights_7d.website_clicks != null) && (
+                    <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                      {insights.insights_7d.profile_views != null && (
+                        <StatBox label="Visitas perfil 7d" value={fmt(insights.insights_7d.profile_views)} icon="👁" />
+                      )}
+                      {insights.insights_7d.website_clicks != null && (
+                        <StatBox label="Cliques no site 7d" value={fmt(insights.insights_7d.website_clicks)} icon="🔗" />
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {insights.publishing_limit && (
                 <div style={{ marginBottom: 14 }}>
@@ -556,6 +857,8 @@ export default function Accounts() {
   const [insights,        setInsights]        = useState({});
   const [loadingIns,      setLoadingIns]      = useState({});
   const [showPageIdModal, setShowPageIdModal] = useState(false);
+  const [refreshingAll,   setRefreshingAll]   = useState(false);
+  const [refreshProgress, setRefreshProgress] = useState({ done: 0, total: 0 });
 
   const APP_ID   = import.meta.env.VITE_META_APP_ID;
   const REDIRECT = encodeURIComponent(window.location.origin + "/api/auth-callback");
@@ -631,6 +934,21 @@ export default function Accounts() {
     }
     setLoadingIns((p) => ({ ...p, [acc.id]: false }));
   }, [insights, loadingIns, reloadAccounts]);
+
+  // ── Atualização em massa: fila sequencial com 300ms entre chamadas ─────────
+  // Sequencial em vez de paralelo: protege contra rate-limit da Meta Graph API
+  // quando há muitas contas. 300ms é o mesmo gap usado no fetch inicial.
+  const handleRefreshAll = useCallback(async () => {
+    if (refreshingAll || accounts.length === 0) return;
+    setRefreshingAll(true);
+    setRefreshProgress({ done: 0, total: accounts.length });
+    for (let i = 0; i < accounts.length; i++) {
+      await fetchInsights(accounts[i], true);
+      setRefreshProgress({ done: i + 1, total: accounts.length });
+      if (i < accounts.length - 1) await new Promise((r) => setTimeout(r, 300));
+    }
+    setRefreshingAll(false);
+  }, [accounts, refreshingAll, fetchInsights]);
 
   const fetchedRef = useRef(false);
   useEffect(() => {
@@ -710,6 +1028,7 @@ export default function Accounts() {
           onClose={() => setDetailAcc(null)}
           onEdit={() => { setEditingAcc(detailAcc); setDetailAcc(null); }}
           onRemove={() => { setConfirmModal({ type: "remove", id: detailAcc.id, username: detailAcc.username }); setDetailAcc(null); }}
+          onRefresh={() => fetchInsights(detailAcc, true)}
         />
       )}
 
@@ -734,25 +1053,49 @@ export default function Accounts() {
         </div>
       ) : (
         <>
+          {/* Health Overview no topo */}
+          <HealthOverview
+            accounts={accounts}
+            insights={insights}
+            loadingMap={loadingIns}
+            onRefreshAll={handleRefreshAll}
+            refreshingAll={refreshingAll}
+            refreshProgress={refreshProgress}
+          />
+
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
             {accounts.map((acc) => {
-              const ins = insights[acc.id];
-              const isLoading = !!loadingIns[acc.id];
-              const statusColor = acc.token_status === "expired" ? "var(--danger)"
-                : ins?.account_status === "limited" ? "var(--danger)"
-                : ins?.account_status === "warning" ? "var(--warning)"
-                : "var(--success)";
-              const statusLabel = acc.token_status === "expired" ? "Token expirado"
-                : ins?.account_status === "limited" ? "Limitada"
-                : ins?.account_status === "warning" ? "Atenção"
-                : "Ativa";
+              const ins          = insights[acc.id];
+              const isLoading    = !!loadingIns[acc.id];
+              const tokenExpired = acc.token_status === "expired";
+              const health       = ins?.health;
+              const topIssue     = tokenExpired
+                ? "Token expirado — reconecte."
+                : (health?.issues?.[0] || null);
+              const reachDrop    = health?.reach_drop_pct;
 
               return (
                 <div key={acc.id} className="card card-hover"
-                  style={{ display: "flex", flexDirection: "column", gap: 12, cursor: "pointer" }}
+                  style={{ display: "flex", flexDirection: "column", gap: 12, cursor: "pointer", position: "relative" }}
                   onClick={() => openDetail(acc)}
                 >
-                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                  {/* Botão refresh individual no canto superior direito */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); fetchInsights(acc, true); }}
+                    disabled={isLoading}
+                    title="Atualizar status"
+                    style={{
+                      position: "absolute", top: 8, right: 8,
+                      background: "var(--bg3)", border: "1px solid var(--border)",
+                      borderRadius: 6, padding: "3px 7px", fontSize: 11,
+                      color: "var(--muted)", cursor: isLoading ? "default" : "pointer",
+                      opacity: isLoading ? 0.5 : 1, lineHeight: 1,
+                    }}
+                  >
+                    {isLoading ? "↻..." : "↻"}
+                  </button>
+
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, paddingRight: 28 }}>
                     <Avatar acc={{ ...acc, account_status: ins?.account_status }} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontWeight: 700, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -761,12 +1104,14 @@ export default function Accounts() {
                       <div style={{ fontSize: 12, color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         @{ins?.username || acc.username || "—"}
                       </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 4, flexWrap: "wrap" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 5, flexWrap: "wrap" }}>
                         <span className="badge badge-purple" style={{ fontSize: 10 }}>{acc.account_type || "BUSINESS"}</span>
                         {acc.added_via === "page_id" && (
-                          <span style={{ fontSize: 10, color: "var(--warning)" }}>🔑</span>
+                          <span style={{ fontSize: 10, color: "var(--warning)" }} title="Adicionada via Page ID">🔑</span>
                         )}
-                        <span style={{ fontSize: 10, fontWeight: 600, color: statusColor }}>● {statusLabel}</span>
+                        {(health || tokenExpired) && (
+                          <HealthBadge health={health} tokenExpired={tokenExpired} size="sm" />
+                        )}
                       </div>
                     </div>
                   </div>
@@ -801,6 +1146,27 @@ export default function Accounts() {
                     </div>
                   )}
 
+                  {/* Reach 7d com indicador de tendência */}
+                  {ins?.insights_7d && (
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11 }}>
+                      <span style={{ color: "var(--muted)" }}>📊 Alcance 7d</span>
+                      <span style={{ color: "var(--text)", fontWeight: 600 }}>
+                        {fmt(ins.insights_7d.reach)}
+                        {reachDrop != null && reachDrop !== 0 && (
+                          <span style={{
+                            marginLeft: 6, fontSize: 10,
+                            color: reachDrop > 0
+                              ? (reachDrop >= 50 ? "var(--danger)" : "var(--warning)")
+                              : "var(--success)",
+                          }}>
+                            {reachDrop > 0 ? `↓${reachDrop}%` : `↑${Math.abs(reachDrop)}%`}
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Quota de publicação */}
                   {ins?.publishing_limit?.config?.quota_total && (() => {
                     const pct = Math.min(100, Math.round((ins.publishing_limit.quota_usage || 0) / ins.publishing_limit.config.quota_total * 100));
                     const color = pct >= 100 ? "var(--danger)" : pct >= 80 ? "var(--warning)" : "var(--success)";
@@ -808,7 +1174,7 @@ export default function Accounts() {
                       <div>
                         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--muted)", marginBottom: 4 }}>
                           <span>Posts hoje</span>
-                          <span style={{ color }}>{ins.publishing_limit.quota_usage}/{ins.publishing_limit.config.quota_total}</span>
+                          <span style={{ color }}>{ins.publishing_limit.quota_usage}/{ins.publishing_limit.config.quota_total} ({pct}%)</span>
                         </div>
                         <div style={{ height: 4, background: "var(--bg3)", borderRadius: 4, overflow: "hidden" }}>
                           <div style={{ height: "100%", width: `${pct}%`, background: color, borderRadius: 4 }} />
@@ -816,6 +1182,22 @@ export default function Accounts() {
                       </div>
                     );
                   })()}
+
+                  {/* Alerta principal (1 linha) */}
+                  {topIssue && (
+                    <div style={{
+                      fontSize: 11, lineHeight: 1.4,
+                      padding: "6px 8px",
+                      background: tokenExpired || health?.overall === "danger" ? "rgba(239,68,68,0.07)" : "rgba(245,158,11,0.07)",
+                      borderLeft: `2px solid ${tokenExpired || health?.overall === "danger" ? "var(--danger)" : "var(--warning)"}`,
+                      borderRadius: 4,
+                      color: "var(--text2)",
+                      overflow: "hidden", textOverflow: "ellipsis",
+                      display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+                    }}>
+                      ⚠ {topIssue}
+                    </div>
+                  )}
 
                   <div style={{ fontSize: 11, color: "var(--muted)", marginTop: "auto" }}>
                     🗓 Conectada em {new Date(acc.connected_at || Date.now()).toLocaleDateString("pt-BR")}
@@ -826,7 +1208,7 @@ export default function Accounts() {
           </div>
 
           <div style={{ marginTop: 20, padding: "12px 16px", background: "var(--bg2)", borderRadius: 10, border: "1px solid var(--border)", fontSize: 12, color: "var(--muted)" }}>
-            💡 Clique em qualquer conta para ver detalhes completos — seguidores, limite de posts, status e mais.
+            💡 Clique em qualquer conta para ver score detalhado, comparação de alcance e lista completa de alertas. Use ↻ para forçar atualização individual ou "Atualizar tudo" no topo para refazer todas em sequência.
           </div>
         </>
       )}
