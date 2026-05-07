@@ -1,9 +1,205 @@
-// account-insights.mjs — Busca dados detalhados de uma conta Instagram
-// Campos retornados: seguidores, seguindo, posts, país, data criação, restrições
+// account-insights.mjs — Status de Saúde completo da conta Instagram
+// Retorna: perfil + content_publishing_limit + insights 7d + análise de saúde
+//
+// Mudanças vs versão anterior:
+// - Busca insights de account-level (reach, profile_views, etc) últimos 7 dias
+// - Busca também os 7 dias anteriores para detectar quedas bruscas
+// - analyzeAccountHealth() consolida tudo em score/overall/issues
+// - Falhas em insights individuais não derrubam a resposta (degradação graceful)
+
 const GRAPH = "https://graph.facebook.com/v21.0";
 
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || process.env.URL || "";
 
+// ─── Helpers de tempo (em segundos UTC, formato Unix) ────────────────────────
+function unixDaysAgo(days) {
+  return Math.floor((Date.now() - days * 86400_000) / 1000);
+}
+
+// ─── Fetch helper com timeout ────────────────────────────────────────────────
+async function gfetch(url, timeoutMs = 8000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal });
+    return await res.json();
+  } catch (err) {
+    return { error: { message: err.name === "AbortError" ? "timeout" : err.message } };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ─── Soma os valores diários retornados por um insight ───────────────────────
+function sumInsightValues(insightObj) {
+  if (!insightObj?.values?.length) return 0;
+  return insightObj.values.reduce((acc, v) => acc + (Number(v.value) || 0), 0);
+}
+
+// ─── Busca insights da conta para uma janela de 7 dias ───────────────────────
+// metric=reach&period=day retorna 1 ponto por dia.
+// Tentamos vários nomes de métricas porque a Meta deprecou algumas em 2024
+// para certos tipos de conta. Falhas individuais não interrompem o fluxo.
+async function fetchInsightsWindow(igId, token, sinceUnix, untilUnix) {
+  const metrics = ["reach", "profile_views", "website_clicks", "follower_count"];
+  const url =
+    `${GRAPH}/${igId}/insights` +
+    `?metric=${metrics.join(",")}` +
+    `&period=day` +
+    `&since=${sinceUnix}&until=${untilUnix}` +
+    `&access_token=${token}`;
+
+  const data = await gfetch(url);
+
+  // Se a chamada inteira falhou, tentamos uma chamada conservadora só com `reach`
+  if (data.error || !data.data) {
+    const fallback = await gfetch(
+      `${GRAPH}/${igId}/insights?metric=reach&period=day&since=${sinceUnix}&until=${untilUnix}&access_token=${token}`
+    );
+    if (fallback.error || !fallback.data) {
+      return { available: false, error: fallback.error?.message || data.error?.message };
+    }
+    return {
+      available: true,
+      reach: sumInsightValues(fallback.data.find((m) => m.name === "reach")),
+      profile_views: null,
+      website_clicks: null,
+      follower_count: null,
+      partial: true,
+    };
+  }
+
+  const findMetric = (name) => data.data.find((m) => m.name === name);
+
+  return {
+    available: true,
+    reach:           sumInsightValues(findMetric("reach")),
+    profile_views:   sumInsightValues(findMetric("profile_views")),
+    website_clicks:  sumInsightValues(findMetric("website_clicks")),
+    // follower_count não é cumulativo — pegamos o último valor da janela
+    follower_count:  (() => {
+      const m = findMetric("follower_count");
+      if (!m?.values?.length) return null;
+      return Number(m.values[m.values.length - 1].value) || null;
+    })(),
+    partial: false,
+  };
+}
+
+// ─── Análise de saúde da conta ───────────────────────────────────────────────
+// Retorna { overall, score, issues, quota_pct, reach_drop_pct, ... }
+//
+// Score parte de 100 e desconta por problema. Faixas:
+//   ≥ 75  → good
+//   45-74 → warning
+//   < 45  → danger
+function analyzeAccountHealth({ profile, publishingLimit, insights7d, insightsPrev7d, tokenExpired }) {
+  const issues = [];
+  let score = 100;
+
+  // ── Token ────────────────────────────────────────────────────────────────
+  if (tokenExpired) {
+    return {
+      overall: "danger",
+      score: 0,
+      issues: ["Token de acesso expirado — reconecte a conta para continuar publicando."],
+      quota_pct: null,
+      reach_drop_pct: null,
+      reach_7d: null,
+      reach_prev_7d: null,
+      profile_views_7d: null,
+      website_clicks_7d: null,
+      insights_available: false,
+    };
+  }
+
+  // ── Quota de publicação (24h) ────────────────────────────────────────────
+  let quotaPct = null;
+  if (publishingLimit?.config?.quota_total) {
+    const used  = Number(publishingLimit.quota_usage || 0);
+    const total = Number(publishingLimit.config.quota_total);
+    quotaPct = Math.round((used / total) * 100);
+
+    if (quotaPct >= 100) {
+      score -= 40;
+      issues.push(`Limite de publicação esgotado (${used}/${total} nas últimas 24h). Aguarde a janela renovar.`);
+    } else if (quotaPct >= 80) {
+      score -= 20;
+      issues.push(`Próximo do limite de publicação (${used}/${total} = ${quotaPct}%). Reduza o ritmo.`);
+    } else if (quotaPct >= 60) {
+      score -= 10;
+    }
+  }
+
+  // ── Insights / queda de alcance ──────────────────────────────────────────
+  const insightsAvailable = !!insights7d?.available;
+  let reachDropPct = null;
+
+  if (insightsAvailable) {
+    const reach     = insights7d.reach || 0;
+    const reachPrev = insightsPrev7d?.reach || 0;
+
+    // Queda só faz sentido se havia alcance prévio
+    if (reachPrev > 0) {
+      reachDropPct = Math.round(((reachPrev - reach) / reachPrev) * 100);
+      if (reachDropPct >= 75) {
+        score -= 35;
+        issues.push(`Queda crítica de alcance: ${reachDropPct}% vs semana anterior (${reachPrev} → ${reach}). Possível shadowban ou penalização algorítmica.`);
+      } else if (reachDropPct >= 50) {
+        score -= 25;
+        issues.push(`Queda forte de alcance: ${reachDropPct}% vs semana anterior (${reachPrev} → ${reach}).`);
+      } else if (reachDropPct >= 30) {
+        score -= 10;
+        issues.push(`Alcance em queda: ${reachDropPct}% vs semana anterior.`);
+      }
+    }
+
+    // Conta com posts mas alcance zero nos últimos 7 dias é um sinal forte
+    if (profile?.media_count > 0 && reach === 0 && reachPrev > 0) {
+      score -= 30;
+      issues.push("Alcance zerado nos últimos 7 dias após semana com tráfego — verifique restrições da conta.");
+    }
+  } else if (insights7d?.error) {
+    // Não derruba o score muito — pode ser conta nova ou permissão faltando
+    score -= 5;
+    issues.push(`Insights indisponíveis: ${insights7d.error}. Verifique se a conta tem permissão instagram_manage_insights.`);
+  }
+
+  // ── Perfil incompleto ────────────────────────────────────────────────────
+  if (profile && !profile.profile_picture_url) {
+    score -= 5;
+    issues.push("Foto de perfil ausente — perfis incompletos têm alcance reduzido.");
+  }
+  if (profile && !profile.biography) {
+    score -= 3;
+    issues.push("Biografia vazia — adicionar uma bio melhora a credibilidade da conta.");
+  }
+
+  // ── Conta nova com pouca atividade ───────────────────────────────────────
+  if (profile && profile.media_count === 0) {
+    score -= 5;
+    issues.push("Nenhum post ainda — contas sem posts são tratadas como inativas pelo algoritmo.");
+  }
+
+  score = Math.max(0, Math.min(100, score));
+
+  const overall = score >= 75 ? "good" : score >= 45 ? "warning" : "danger";
+
+  return {
+    overall,
+    score,
+    issues,
+    quota_pct: quotaPct,
+    reach_drop_pct: reachDropPct,
+    reach_7d: insights7d?.reach ?? null,
+    reach_prev_7d: insightsPrev7d?.reach ?? null,
+    profile_views_7d: insights7d?.profile_views ?? null,
+    website_clicks_7d: insights7d?.website_clicks ?? null,
+    insights_available: insightsAvailable,
+  };
+}
+
+// ─── Handler ─────────────────────────────────────────────────────────────────
 export const handler = async (event) => {
   const requestOrigin = event.headers?.origin || "";
   const corsOrigin = ALLOWED_ORIGIN && requestOrigin === ALLOWED_ORIGIN
@@ -29,62 +225,72 @@ export const handler = async (event) => {
     return { statusCode: 400, headers, body: JSON.stringify({ error: "instagram_id e access_token são obrigatórios" }) };
 
   try {
-    // ── Campos públicos do perfil ─────────────────────────────────────────────
-    // followers_count, media_count, follows_count, biography, website,
-    // profile_picture_url, username, name, account_type
+    // ── 1. Perfil ──────────────────────────────────────────────────────────
     const profileFields = [
       "id", "username", "name", "biography", "website",
       "profile_picture_url", "account_type",
       "followers_count", "follows_count", "media_count",
     ].join(",");
 
-    const profileRes  = await fetch(`${GRAPH}/${instagram_id}?fields=${profileFields}&access_token=${access_token}`);
-    const profileData = await profileRes.json();
+    const profileData = await gfetch(
+      `${GRAPH}/${instagram_id}?fields=${profileFields}&access_token=${access_token}`
+    );
 
     if (profileData.error) {
-      // Erro 190 = token expirado
       if (profileData.error.code === 190) {
-        return { statusCode: 401, headers, body: JSON.stringify({ error: "token_expired", message: "Token expirado. Reconecte a conta." }) };
+        // Token expirado — retorna análise sinalizando danger para o frontend
+        // poder renderizar consistentemente.
+        const health = analyzeAccountHealth({ tokenExpired: true });
+        return {
+          statusCode: 401,
+          headers,
+          body: JSON.stringify({
+            error: "token_expired",
+            message: "Token expirado. Reconecte a conta.",
+            health,
+          }),
+        };
       }
       return { statusCode: 400, headers, body: JSON.stringify({ error: profileData.error.message }) };
     }
 
-    // ── Content Publishing Limit (restrições de publicação) ───────────────────
-    // Retorna quota_usage (% de limite de publicação usada nas últimas 24h)
-    // e config (limites por tipo de conta)
+    // ── 2. Limit + insights em paralelo ────────────────────────────────────
+    const now             = Math.floor(Date.now() / 1000);
+    const sevenDaysAgo    = unixDaysAgo(7);
+    const fourteenDaysAgo = unixDaysAgo(14);
+
+    const [limitData, insights7d, insightsPrev7d] = await Promise.all([
+      gfetch(`${GRAPH}/${instagram_id}/content_publishing_limit?fields=config,quota_usage&access_token=${access_token}`),
+      fetchInsightsWindow(instagram_id, access_token, sevenDaysAgo, now),
+      fetchInsightsWindow(instagram_id, access_token, fourteenDaysAgo, sevenDaysAgo),
+    ]);
+
     let publishingLimit = null;
-    try {
-      const limitRes  = await fetch(`${GRAPH}/${instagram_id}/content_publishing_limit?fields=config,quota_usage&access_token=${access_token}`);
-      const limitData = await limitRes.json();
-      if (!limitData.error && limitData.data?.length > 0) {
-        publishingLimit = limitData.data[0];
-      }
-    } catch { /* silencioso — nem todas as contas expõem este endpoint */ }
-
-    // ── Menções e tags recentes (proxy para verificar se conta está ativa) ────
-    // Não há endpoint direto para "restrições", mas podemos verificar
-    // o status via tentativa de buscar o container_status mais recente
-    // O campo mais próximo disponível é verificar se a conta aceita publicação
-    let accountStatus = "active"; // padrão
-    let restrictionNote = null;
-
-    if (publishingLimit) {
-      const usage = publishingLimit.quota_usage || 0;
-      const maxConfig = publishingLimit.config?.quota_total || 50;
-      if (usage >= maxConfig) {
-        accountStatus = "limited";
-        restrictionNote = `Limite de publicação atingido (${usage}/${maxConfig} posts nas últimas 24h)`;
-      } else if (usage >= maxConfig * 0.8) {
-        accountStatus = "warning";
-        restrictionNote = `Próximo do limite de publicação (${usage}/${maxConfig} posts nas últimas 24h)`;
-      }
+    if (!limitData.error && limitData.data?.length > 0) {
+      publishingLimit = limitData.data[0];
     }
 
-    // ── Montar resposta ───────────────────────────────────────────────────────
+    // ── 3. Análise de saúde ────────────────────────────────────────────────
+    const health = analyzeAccountHealth({
+      profile: profileData,
+      publishingLimit,
+      insights7d,
+      insightsPrev7d,
+      tokenExpired: false,
+    });
+
+    // ── 4. Compat com frontend antigo (Avatar e cards usam account_status) ─
+    const accountStatus =
+        health.overall === "danger"  ? (health.quota_pct >= 100 ? "limited" : "danger")
+      : health.overall === "warning" ? "warning"
+      : "active";
+    const restrictionNote = health.issues[0] || null;
+
     return {
       statusCode: 200,
       headers,
       body: JSON.stringify({
+        // Perfil
         id:               profileData.id,
         username:         profileData.username,
         name:             profileData.name,
@@ -95,9 +301,29 @@ export const handler = async (event) => {
         followers_count:  profileData.followers_count ?? null,
         follows_count:    profileData.follows_count ?? null,
         media_count:      profileData.media_count ?? null,
+
+        // Quota
         publishing_limit: publishingLimit,
+
+        // Insights
+        insights_7d: insights7d.available ? {
+          reach:          insights7d.reach,
+          profile_views:  insights7d.profile_views,
+          website_clicks: insights7d.website_clicks,
+          partial:        insights7d.partial,
+        } : null,
+        insights_prev_7d: insightsPrev7d.available ? {
+          reach:         insightsPrev7d.reach,
+          profile_views: insightsPrev7d.profile_views,
+        } : null,
+
+        // Saúde consolidada
+        health,
+
+        // Compat
         account_status:   accountStatus,
         restriction_note: restrictionNote,
+
         fetched_at:       new Date().toISOString(),
       }),
     };
