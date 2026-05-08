@@ -217,10 +217,7 @@ export default function NewPost() {
               {/* Painel URL manual */}
               {showBulkUrl && (
                 <textarea
-                  placeholder={"Cole as URLs, uma por linha:
-https://files.catbox.moe/abc.jpg
-https://r2.exemplo.com/video2.mp4
-https://cdn.exemplo.com/img3.png"}
+                  placeholder={"Cole as URLs, uma por linha:\nhttps://files.catbox.moe/abc.jpg\nhttps://r2.exemplo.com/video2.mp4\nhttps://cdn.exemplo.com/img3.png"}
                   value={mediaUrl}
                   onChange={(e) => { setMediaUrl(e.target.value); setMediaValid(false); }}
                   style={{ fontSize: 12, minHeight: 100, resize: "vertical", fontFamily: "monospace", borderRadius: 8, marginBottom: 8 }}

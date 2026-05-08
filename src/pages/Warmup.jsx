@@ -292,10 +292,7 @@ function MediaUploadZone({ typeConfig, files, onAddFiles, onRemoveFile, onUpload
       {showBulkUrl && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 8 }}>
           <textarea
-            placeholder={"Cole as URLs, uma por linha:
-https://files.catbox.moe/abc.mp4
-https://r2.exemplo.com/video2.mp4
-https://cdn.exemplo.com/video3.mp4"}
+            placeholder={"Cole as URLs, uma por linha:\nhttps://files.catbox.moe/abc.mp4\nhttps://r2.exemplo.com/video2.mp4\nhttps://cdn.exemplo.com/video3.mp4"}
             value={urlInput || ""}
             onChange={(e) => onUrlInputChange(typeConfig.id, e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && e.ctrlKey) { e.preventDefault(); handleAddUrl(); } }}
