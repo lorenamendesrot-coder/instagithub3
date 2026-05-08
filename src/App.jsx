@@ -9,6 +9,7 @@ import History   from "./pages/History.jsx";
 import Warmup      from "./pages/Warmup.jsx";
 import Protection  from "./pages/Protection.jsx";
 import Logs        from "./pages/Logs.jsx";
+import Insights    from "./pages/Insights.jsx";
 
 // Hooks e componentes isolados
 import { useAccounts }     from "./useAccounts.js";
@@ -156,6 +157,7 @@ export default function App() {
           <Route path="/aquecimento" element={<Warmup />} />
           <Route path="/protecao"     element={<Protection />} />
           <Route path="/logs"          element={<Logs />} />
+          <Route path="/insights"      element={<Insights />} />
         </Routes>
       </main>
 
