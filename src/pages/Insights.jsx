@@ -134,7 +134,7 @@ function AccountInsights({ account, date }) {
   const load = useCallback(async () => {
     setState((p) => ({ ...p, loading: true, error: null }));
     try {
-      const params = new URLSearchParams({ ig_id: account.id, token: account.token, date });
+      const params = new URLSearchParams({ ig_id: account.id, token: account.access_token, date });
       const res  = await fetch(`${API}?${params}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
