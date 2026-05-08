@@ -781,13 +781,8 @@ export default function Accounts() {
     setRefreshingAll(false);
   }, [accounts, refreshingAll, fetchInsights]);
 
-  // ── Fetch inicial: escalonado 300ms por conta ──────────────────────────────
+  // ── Sem fetch automático — use o botão "Atualizar tudo" ──────────────────
   const fetchedRef = useRef(false);
-  useEffect(() => {
-    if (loading || accounts.length === 0 || fetchedRef.current) return;
-    fetchedRef.current = true;
-    accounts.forEach((acc, i) => setTimeout(() => fetchInsights(acc), i * 300));
-  }, [accounts, loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openDetail = (acc) => {
     setDetailAcc(acc);
