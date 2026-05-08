@@ -190,31 +190,17 @@ export default function NewPost() {
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
                 <label style={{ margin: 0 }}>Mídia</label>
                 {/* Tabs de modo */}
-                <div style={{ display: "flex", background: "var(--bg3)", borderRadius: 8, padding: 3, gap: 2 }}>
-                  <button
-                    onClick={() => setMediaMode("upload")}
-                    style={{
-                      padding: "5px 12px", borderRadius: 6, fontSize: 12, fontWeight: 500,
-                      background: mediaMode === "upload" ? "var(--bg2)" : "transparent",
-                      color: mediaMode === "upload" ? "var(--accent-light)" : "var(--muted)",
-                      border: mediaMode === "upload" ? "1px solid var(--border)" : "1px solid transparent",
-                      transition: "all 0.12s",
-                    }}
-                  >
-                    ☁️ Upload mídia
-                  </button>
-                  <button
-                    onClick={() => setMediaMode("url")}
-                    style={{
-                      padding: "5px 12px", borderRadius: 6, fontSize: 12, fontWeight: 500,
-                      background: mediaMode === "url" ? "var(--bg2)" : "transparent",
-                      color: mediaMode === "url" ? "var(--accent-light)" : "var(--muted)",
-                      border: mediaMode === "url" ? "1px solid var(--border)" : "1px solid transparent",
-                      transition: "all 0.12s",
-                    }}
-                  >
-                    🔗 URL manual
-                  </button>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {[{ id: "upload", icon: "☁️", label: "Upload mídia" }, { id: "url", icon: "🔗", label: "URL em massa" }].map(({ id, icon, label }) => (
+                    <button key={id} onClick={() => setMediaMode(id)} style={{
+                      padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: mediaMode === id ? 700 : 400,
+                      border: `1px solid ${mediaMode === id ? "var(--accent)" : "var(--border)"}`,
+                      background: mediaMode === id ? "rgba(124,92,252,0.12)" : "var(--bg3)",
+                      color: mediaMode === id ? "var(--accent-light)" : "var(--muted)", cursor: "pointer",
+                    }}>
+                      {icon} {label}
+                    </button>
+                  ))}
                 </div>
               </div>
 
@@ -233,15 +219,22 @@ export default function NewPost() {
                 </div>
               )}
 
-              {/* Painel URL manual */}
+              {/* Painel URL em massa */}
               {mediaMode === "url" && (
-                <input
-                  type="url"
-                  placeholder="https://files.catbox.moe/xxxxxx.jpg"
-                  value={mediaUrl}
-                  onChange={(e) => { setMediaUrl(e.target.value); setMediaValid(false); }}
-                  style={{ fontSize: 13 }}
-                />
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <textarea
+                    placeholder={"Cole as URLs, uma por linha:
+https://files.catbox.moe/abc.jpg
+https://r2.exemplo.com/video2.mp4
+https://cdn.exemplo.com/img3.png"}
+                    value={mediaUrl}
+                    onChange={(e) => { setMediaUrl(e.target.value); setMediaValid(false); }}
+                    style={{ fontSize: 12, minHeight: 100, resize: "vertical", fontFamily: "monospace", borderRadius: 8 }}
+                  />
+                  <div style={{ fontSize: 10, color: "var(--muted)" }}>
+                    {mediaUrl.split(/[\n,]/).filter((u) => u.trim().startsWith("http")).length} URL(s) detectada(s) · Ctrl+Enter para confirmar
+                  </div>
+                </div>
               )}
 
               {/* Preview sempre visível se tiver URL */}

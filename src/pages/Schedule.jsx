@@ -220,6 +220,8 @@ export default function Schedule() {
 
   const [distMode,     setDistMode]     = useState("all");
   const [showUploader, setShowUploader] = useState(false);
+  const [bulkUrlText,  setBulkUrlText]  = useState("");
+  const [mediaMode,    setMediaMode]    = useState("upload"); // "upload" | "url"
   const [editModal,    setEditModal]    = useState(null);
   const [editTime,     setEditTime]     = useState("");
   const [editCaption,  setEditCaption]  = useState("");
@@ -251,7 +253,19 @@ export default function Schedule() {
     if (hasVideo && !isReel) setMediaType("VIDEO");
     else if (!hasVideo && !isReel) setMediaType("IMAGE");
     setShowUploader(false);
-  };
+  }
+
+  const handleBulkUrls = () => {
+    const urls = bulkUrlText.split(/[\n,]/).map((u) => u.trim()).filter((u) => u.startsWith("http"));
+    if (!urls.length) return;
+    const newEntries = urls.map((url, i) => ({ id: Date.now() + i, url, type: isReel ? "VIDEO" : mediaType }));
+    setUrlList((p) => {
+      const nonEmpty = p.filter((x) => x.url.trim());
+      return [...nonEmpty, ...newEntries];
+    });
+    setBulkUrlText("");
+    setMediaMode("upload");
+  };;
 
   // ── Lógica de geração da fila com suporte a quantityPerCycle ──
   // Parseia bulk captions
@@ -465,18 +479,50 @@ export default function Schedule() {
                 Mídias ({validUrls.length})
               </div>
               <div style={{ display: "flex", gap: 6 }}>
-                <button className={`btn btn-sm ${showUploader ? "btn-primary" : "btn-ghost"}`} onClick={() => setShowUploader((p) => !p)}>
-                  ☁️ Upload mídias
-                </button>
-                <button className="btn btn-ghost btn-xs" onClick={addUrl}>+ URL manual</button>
+                {[{ id: "upload", icon: "☁️", label: "Upload mídia" }, { id: "url", icon: "🔗", label: "URL em massa" }].map(({ id, icon, label }) => (
+                  <button key={id} onClick={() => { setMediaMode(id); if (id === "upload") setShowUploader((p) => !p); }} style={{
+                    padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: mediaMode === id ? 700 : 400,
+                    border: `1px solid ${mediaMode === id ? "var(--accent)" : "var(--border)"}`,
+                    background: mediaMode === id ? "rgba(124,92,252,0.12)" : "var(--bg3)",
+                    color: mediaMode === id ? "var(--accent-light)" : "var(--muted)", cursor: "pointer",
+                  }}>
+                    {icon} {label}
+                  </button>
+                ))}
               </div>
             </div>
-            {showUploader && (
+            {/* Painel Upload */}
+            {mediaMode === "upload" && showUploader && (
               <div style={{ marginBottom: 14, padding: "14px", background: "var(--bg3)", borderRadius: 10, border: "1px solid var(--border)" }}>
                 <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 10, color: "var(--accent-light)" }}>☁️ Upload direto para Catbox</div>
                 <CatboxUploader onUrlsReady={handleCatboxUrls} mediaType={mediaType} />
               </div>
             )}
+
+            {/* Painel URL em massa */}
+            {mediaMode === "url" && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+                <textarea
+                  placeholder={"Cole as URLs, uma por linha:
+https://files.catbox.moe/abc.mp4
+https://r2.exemplo.com/video2.mp4
+https://cdn.exemplo.com/video3.mp4"}
+                  value={bulkUrlText}
+                  onChange={(e) => setBulkUrlText(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && e.ctrlKey) { e.preventDefault(); handleBulkUrls(); } }}
+                  style={{ fontSize: 11, minHeight: 100, resize: "vertical", fontFamily: "monospace", borderRadius: 8 }}
+                />
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <button className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={handleBulkUrls}
+                    disabled={!bulkUrlText.split(/[\n,]/).some((u) => u.trim().startsWith("http"))}>
+                    ✓ Adicionar URLs
+                  </button>
+                  <span style={{ fontSize: 10, color: "var(--muted)" }}>Ctrl+Enter</span>
+                </div>
+              </div>
+            )}
+
+            {/* Lista de URLs adicionadas */}
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {urlList.map((item, idx) => (
                 <div key={item.id} style={{ display: "flex", gap: 7, alignItems: "center" }}>

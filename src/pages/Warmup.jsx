@@ -218,8 +218,8 @@ function shadowScore(insights) {
 // ─── Sub-componentes ──────────────────────────────────────────────────────────
 
 function MediaUploadZone({ typeConfig, files, onAddFiles, onRemoveFile, onUploadAll, uploading, urlInput, onUrlInputChange, onAddUrl }) {
-  const [dragging,  setDragging]  = useState(false);
-  const [showUrl,   setShowUrl]   = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [mode,     setMode]     = useState("upload");
   const inputRef = useRef();
 
   const onDrop = useCallback((e) => {
@@ -233,18 +233,20 @@ function MediaUploadZone({ typeConfig, files, onAddFiles, onRemoveFile, onUpload
   const errors  = myFiles.filter((f) => f.status === "error");
   const idle    = myFiles.filter((f) => f.status === "idle");
 
-  // Valida e adiciona URLs (aceita múltiplas, uma por linha)
   const handleAddUrl = () => {
     const urls = (urlInput || "").split(/[
 ,]/).map((u) => u.trim()).filter((u) => u.startsWith("http"));
     if (!urls.length) return;
     onAddUrl(typeConfig.id, urls);
     onUrlInputChange(typeConfig.id, "");
-    setShowUrl(false);
   };
+
+  const urlCount = (urlInput || "").split(/[
+,]/).filter((u) => u.trim().startsWith("http")).length;
 
   return (
     <div style={{ marginBottom: 4 }}>
+      {/* Header */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
         <span style={{ fontSize: 18 }}>{typeConfig.icon}</span>
         <div style={{ flex: 1 }}>
@@ -258,69 +260,62 @@ function MediaUploadZone({ typeConfig, files, onAddFiles, onRemoveFile, onUpload
         )}
       </div>
 
-      <div
-        onDrop={onDrop}
-        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-        onDragLeave={() => setDragging(false)}
-        onClick={() => inputRef.current?.click()}
-        style={{
-          border: `2px dashed ${dragging ? "var(--accent)" : "var(--border2)"}`,
-          borderRadius: 10, padding: "16px", textAlign: "center", cursor: "pointer",
-          background: dragging ? "rgba(124,92,252,0.08)" : "var(--bg3)",
-          transition: "all 0.15s", marginBottom: 8,
-        }}
-      >
-        <div style={{ fontSize: 20, marginBottom: 3 }}>{typeConfig.icon}</div>
-        <div style={{ fontSize: 12, fontWeight: 600 }}>
-          {dragging ? "Solte aqui" : `Arraste ou clique`}
-        </div>
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          accept={typeConfig.accept}
-          style={{ display: "none" }}
-          onChange={(e) => e.target.files.length && onAddFiles(typeConfig.id, e.target.files)}
-        />
+      {/* Toggle buttons */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+        {[{ id: "upload", icon: "☁️", label: "Upload mídia" }, { id: "url", icon: "🔗", label: "URL em massa" }].map(({ id, icon, label }) => (
+          <button key={id} onClick={() => setMode(id)} style={{
+            flex: 1, padding: "8px 10px", borderRadius: 8, fontSize: 11, fontWeight: mode === id ? 700 : 400,
+            border: `1px solid ${mode === id ? "var(--accent)" : "var(--border)"}`,
+            background: mode === id ? "rgba(124,92,252,0.12)" : "var(--bg3)",
+            color: mode === id ? "var(--accent-light)" : "var(--muted)", cursor: "pointer",
+          }}>
+            {icon} {label}
+          </button>
+        ))}
       </div>
 
-      {/* ── Upload por URL ── */}
-      <div style={{ marginBottom: myFiles.length ? 8 : 0 }}>
-        <button
-          className="btn btn-ghost btn-xs"
-          style={{ width: "100%", justifyContent: "center", gap: 5, marginBottom: showUrl ? 6 : 0 }}
-          onClick={(e) => { e.stopPropagation(); setShowUrl((p) => !p); }}
+      {/* Painel Upload */}
+      {mode === "upload" && (
+        <div
+          onDrop={onDrop}
+          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onClick={() => inputRef.current?.click()}
+          style={{
+            border: `2px dashed ${dragging ? "var(--accent)" : "var(--border2)"}`,
+            borderRadius: 10, padding: "20px", textAlign: "center", cursor: "pointer",
+            background: dragging ? "rgba(124,92,252,0.08)" : "var(--bg3)",
+            transition: "all 0.15s", marginBottom: 8,
+          }}
         >
-          <span>🔗</span>
-          {showUrl ? "Ocultar campo de URL" : "Adicionar por URL"}
-        </button>
+          <div style={{ fontSize: 22, marginBottom: 4 }}>{typeConfig.icon}</div>
+          <div style={{ fontSize: 12, fontWeight: 600 }}>{dragging ? "Solte aqui" : "Arraste ou clique para selecionar"}</div>
+          <input ref={inputRef} type="file" multiple accept={typeConfig.accept} style={{ display: "none" }}
+            onChange={(e) => e.target.files.length && onAddFiles(typeConfig.id, e.target.files)} />
+        </div>
+      )}
 
-        {showUrl && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-            <textarea
-              placeholder={"Cole uma ou mais URLs (uma por linha):
-https://files.catbox.moe/abc123.mp4
-https://r2.example.com/video2.mp4"}
-              value={urlInput || ""}
-              onChange={(e) => onUrlInputChange(typeConfig.id, e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && e.ctrlKey) { e.preventDefault(); handleAddUrl(); } }}
-              style={{ fontSize: 11, minHeight: 70, resize: "vertical", fontFamily: "monospace" }}
-            />
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <button
-                className="btn btn-primary btn-xs"
-                style={{ flex: 1 }}
-                onClick={handleAddUrl}
-                disabled={!(urlInput || "").trim()}
-              >
-                ✓ Adicionar URL{(urlInput || "").split(/[
-,]/).filter((u) => u.trim().startsWith("http")).length > 1 ? "s" : ""}
-              </button>
-              <span style={{ fontSize: 10, color: "var(--muted)" }}>Ctrl+Enter</span>
-            </div>
+      {/* Painel URL em massa */}
+      {mode === "url" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 8 }}>
+          <textarea
+            placeholder={"Cole as URLs, uma por linha:
+https://files.catbox.moe/abc.mp4
+https://r2.exemplo.com/video2.mp4
+https://cdn.exemplo.com/video3.mp4"}
+            value={urlInput || ""}
+            onChange={(e) => onUrlInputChange(typeConfig.id, e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && e.ctrlKey) { e.preventDefault(); handleAddUrl(); } }}
+            style={{ fontSize: 11, minHeight: 100, resize: "vertical", fontFamily: "monospace", borderRadius: 8 }}
+          />
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <button className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={handleAddUrl} disabled={!urlCount}>
+              ✓ Adicionar {urlCount > 0 ? `${urlCount} URL${urlCount > 1 ? "s" : ""}` : "URLs"}
+            </button>
+            <span style={{ fontSize: 10, color: "var(--muted)", flexShrink: 0 }}>Ctrl+Enter</span>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {myFiles.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 180, overflowY: "auto", marginBottom: 6 }}>
