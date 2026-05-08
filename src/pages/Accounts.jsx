@@ -589,27 +589,28 @@ function AccountDetailModal({ acc, insights, loadingInsights, onClose, onEdit, o
     }}>
       <div style={{
         background: "var(--bg2)", border: "1px solid var(--border2)",
-        borderRadius: 18, width: "100%", maxWidth: 480,
+        borderRadius: 18, width: "100%", maxWidth: 420,
+        maxHeight: "90vh", overflowY: "auto",
         boxShadow: "0 24px 64px rgba(0,0,0,0.7)", overflow: "hidden",
       }}>
-        <div style={{ height: 72, background: "linear-gradient(135deg, #7c5cfc22, #9b4dfc44)", position: "relative", borderBottom: "1px solid var(--border)" }}>
+        <div style={{ height: 52, background: "linear-gradient(135deg, #7c5cfc22, #9b4dfc44)", position: "relative", borderBottom: "1px solid var(--border)" }}>
           <button onClick={onClose} style={{ position: "absolute", top: 12, right: 14, background: "none", color: "var(--muted)", fontSize: 20, padding: "0 4px", lineHeight: 1 }}>×</button>
         </div>
 
-        <div style={{ padding: "0 20px 0", marginTop: -36 }}>
+        <div style={{ padding: "0 16px 0", marginTop: -28 }}>
           <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
-            <Avatar acc={{ ...acc, account_status: insights?.account_status }} size={72} />
+            <Avatar acc={{ ...acc, account_status: insights?.account_status }} size={56} />
             <div style={{ display: "flex", gap: 7, paddingBottom: 6 }}>
               <button className="btn btn-ghost btn-sm" onClick={onRefresh} disabled={loadingInsights} title="Atualizar status">
                 {loadingInsights ? "↻" : "↻ Atualizar"}
               </button>
-
+              <button className="btn btn-ghost btn-sm" onClick={onEdit}>✏️ Editar perfil</button>
               <button className="btn btn-danger btn-sm" onClick={onRemove}>Desconectar</button>
             </div>
           </div>
 
           <div style={{ marginTop: 10, marginBottom: 14 }}>
-            <div style={{ fontWeight: 700, fontSize: 17 }}>{acc.nickname || acc.name || acc.username}</div>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>{acc.nickname || acc.name || acc.username}</div>
             <div style={{ fontSize: 13, color: "var(--muted)" }}>@{acc.username}</div>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
               <span className="badge badge-purple">{acc.account_type || "BUSINESS"}</span>
@@ -625,7 +626,7 @@ function AccountDetailModal({ acc, insights, loadingInsights, onClose, onEdit, o
           </div>
         </div>
 
-        <div style={{ padding: "0 20px 20px" }}>
+        <div style={{ padding: "0 16px 16px" }}>
           {loadingInsights ? (
             <div style={{ textAlign: "center", padding: "28px 0" }}>
               <div className="spinner" style={{ width: 22, height: 22, margin: "0 auto 10px" }} />
@@ -633,7 +634,7 @@ function AccountDetailModal({ acc, insights, loadingInsights, onClose, onEdit, o
             </div>
           ) : insights ? (
             <>
-              <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+              <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
                 <StatBox label="Seguidores"  value={fmt(insights.followers_count)} icon="👥" />
                 <StatBox label="Seguindo"    value={fmt(insights.follows_count)}   icon="➡️" />
                 <StatBox label="Posts"       value={fmt(insights.media_count)}      icon="📸" />
@@ -658,7 +659,7 @@ function AccountDetailModal({ acc, insights, loadingInsights, onClose, onEdit, o
                   { icon: "🔄", label: "Dados atualizados", value: insights.fetched_at ? new Date(insights.fetched_at).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "—" },
                   { icon: "🆔", label: "Instagram ID", value: acc.id },
                 ].map((item) => (
-                  <div key={item.label} style={{ padding: "9px 11px", background: "var(--bg3)", borderRadius: 8, border: "1px solid var(--border)" }}>
+                  <div key={item.label} style={{ padding: "7px 9px", background: "var(--bg3)", borderRadius: 8, border: "1px solid var(--border)" }}>
                     <div style={{ fontSize: 10, color: "var(--muted)", marginBottom: 3 }}>{item.icon} {item.label}</div>
                     <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.value}</div>
                   </div>
@@ -785,11 +786,158 @@ function AccountDetailModal({ acc, insights, loadingInsights, onClose, onEdit, o
 }
 
 // ── Modal de edição de perfil ─────────────────────────────────────────────────
+function EditProfileModal({ acc, onClose, onSaved }) {
+  const [tab, setTab]           = useState("bio");
+  const [bio, setBio]           = useState(acc.biography || "");
+  const [website, setWebsite]   = useState(acc.website || "");
+  const [photoUrl, setPhotoUrl] = useState("");
+  const [loading, setLoading]   = useState(false);
+  const [result, setResult]     = useState(null);
+
+  const saveProfile = async () => {
+    setLoading(true); setResult(null);
+    try {
+      const res = await fetch("/api/update-profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instagram_id: acc.id, access_token: acc.access_token, biography: bio, website }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setResult({ type: "success", msg: "Bio e link atualizados!" });
+        onSaved({ ...acc, biography: bio, website });
+      } else {
+        setResult({ type: "error", msg: data.error || "Erro ao atualizar." });
+      }
+    } catch (e) { setResult({ type: "error", msg: e.message }); }
+    setLoading(false);
+  };
+
+  const savePhoto = async () => {
+    if (!photoUrl.trim()) return;
+    setLoading(true); setResult(null);
+    try {
+      const res = await fetch("/api/update-profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instagram_id: acc.id, access_token: acc.access_token, profile_picture_url: photoUrl }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setResult({ type: "success", msg: "Foto atualizada!" });
+        onSaved({ ...acc, profile_picture: photoUrl });
+        setPhotoUrl("");
+      } else {
+        setResult({ type: "error", msg: data.error || "Erro ao atualizar foto." });
+      }
+    } catch (e) { setResult({ type: "error", msg: e.message }); }
+    setLoading(false);
+  };
+
+  return (
+    <div onClick={(e) => e.target === e.currentTarget && onClose()} style={{
+      position: "fixed", inset: 0, zIndex: 3000,
+      background: "rgba(0,0,0,0.75)", backdropFilter: "blur(5px)",
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
+    }}>
+      <div style={{ background: "var(--bg2)", border: "1px solid var(--border2)", borderRadius: 16, width: "100%", maxWidth: 460, boxShadow: "0 24px 64px rgba(0,0,0,0.7)", overflow: "hidden" }}>
+        <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 12 }}>
+          <Avatar acc={acc} size={36} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: 14 }}>@{acc.username}</div>
+            <div style={{ fontSize: 11, color: "var(--muted)" }}>Editar perfil</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", color: "var(--muted)", fontSize: 22, padding: "0 4px" }}>×</button>
+        </div>
+
+        <div style={{ display: "flex", borderBottom: "1px solid var(--border)" }}>
+          {[{ id: "bio", label: "📝 Bio & Link" }, { id: "photo", label: "📷 Foto" }].map((t) => (
+            <button key={t.id} onClick={() => { setTab(t.id); setResult(null); }} style={{
+              flex: 1, padding: "11px", fontSize: 13,
+              fontWeight: tab === t.id ? 600 : 400,
+              color: tab === t.id ? "var(--accent-light)" : "var(--muted)",
+              background: "none",
+              borderBottom: `2px solid ${tab === t.id ? "var(--accent)" : "transparent"}`,
+            }}>{t.label}</button>
+          ))}
+        </div>
+
+        <div style={{ padding: 20 }}>
+          {tab === "bio" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div>
+                <label>Bio</label>
+                <textarea value={bio} onChange={(e) => setBio(e.target.value)} placeholder="Escreva sua bio..." style={{ minHeight: 88 }} maxLength={150} />
+                <div style={{ fontSize: 11, color: bio.length > 130 ? "var(--warning)" : "var(--muted)", textAlign: "right", marginTop: 4 }}>{bio.length}/150</div>
+              </div>
+              <div>
+                <label>Link da bio</label>
+                <input type="url" value={website} onChange={(e) => setWebsite(e.target.value)} placeholder="https://seusite.com.br" />
+              </div>
+              <div style={{ padding: "9px 12px", background: "rgba(245,158,11,0.07)", borderRadius: 8, fontSize: 12, color: "var(--warning)", borderLeft: "3px solid var(--warning)" }}>
+                ⚠️ Requer permissão <strong>instagram_manage_profile</strong> aprovada no App Meta.
+              </div>
+              {result && (
+                <div style={{ padding: "10px 14px", borderRadius: 8, fontSize: 13, background: result.type === "success" ? "var(--success-bg)" : "rgba(239,68,68,0.08)", color: result.type === "success" ? "var(--success)" : "var(--danger)" }}>
+                  {result.type === "success" ? "✓ " : "✕ "}{result.msg}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 10 }}>
+                <button className="btn btn-primary" style={{ flex: 1 }} onClick={saveProfile} disabled={loading}>
+                  {loading ? <><span className="spinner" /> Salvando...</> : "Salvar"}
+                </button>
+                <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+              </div>
+            </div>
+          )}
+
+          {tab === "photo" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 14, padding: 14, background: "var(--bg3)", borderRadius: 10 }}>
+                <Avatar acc={acc} size={58} />
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>Foto atual</div>
+                  <div style={{ fontSize: 11, color: "var(--muted)" }}>@{acc.username}</div>
+                </div>
+              </div>
+              <div>
+                <label>URL da nova foto</label>
+                <input type="url" value={photoUrl} onChange={(e) => setPhotoUrl(e.target.value)} placeholder="https://files.catbox.moe/foto.jpg" />
+                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>JPG ou PNG público</div>
+              </div>
+              {photoUrl && (
+                <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", background: "var(--bg3)", borderRadius: 9, border: "1px solid var(--accent)" }}>
+                  <img src={photoUrl} alt="preview" style={{ width: 48, height: 48, borderRadius: "50%", objectFit: "cover", border: "2px solid var(--accent)", flexShrink: 0 }} onError={(e) => { e.target.style.opacity = "0.3"; }} />
+                  <div style={{ fontSize: 12, color: "var(--muted)" }}>Prévia</div>
+                </div>
+              )}
+              <div style={{ padding: "9px 12px", background: "rgba(245,158,11,0.07)", borderRadius: 8, fontSize: 12, color: "var(--warning)", borderLeft: "3px solid var(--warning)" }}>
+                ⚠️ Requer permissão <strong>instagram_manage_profile</strong> aprovada no App Meta.
+              </div>
+              {result && (
+                <div style={{ padding: "10px 14px", borderRadius: 8, fontSize: 13, background: result.type === "success" ? "var(--success-bg)" : "rgba(239,68,68,0.08)", color: result.type === "success" ? "var(--success)" : "var(--danger)" }}>
+                  {result.type === "success" ? "✓ " : "✕ "}{result.msg}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 10 }}>
+                <button className="btn btn-primary" style={{ flex: 1 }} onClick={savePhoto} disabled={loading || !photoUrl.trim()}>
+                  {loading ? <><span className="spinner" /> Atualizando...</> : "Atualizar foto"}
+                </button>
+                <button className="btn btn-ghost" onClick={onClose}>Cancelar</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── Página principal ──────────────────────────────────────────────────────────
 export default function Accounts() {
   const { accounts, removeAccount, clearAllAccounts, loading, reloadAccounts, addAccounts } = useAccounts();
   const [confirmModal,    setConfirmModal]    = useState(null);
+  const [editingAcc,      setEditingAcc]      = useState(null);
   const [detailAcc,       setDetailAcc]       = useState(null);
   const [insights,        setInsights]        = useState({});
   const [loadingIns,      setLoadingIns]      = useState({});
@@ -960,7 +1108,13 @@ export default function Accounts() {
       )}
 
       {/* Modal edição */}
-
+      {editingAcc && (
+        <EditProfileModal
+          acc={editingAcc}
+          onClose={() => setEditingAcc(null)}
+          onSaved={handleSaved}
+        />
+      )}
 
       {/* Modal renomear */}
       {renamingAcc && (
