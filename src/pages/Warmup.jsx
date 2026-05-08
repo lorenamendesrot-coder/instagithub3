@@ -2,6 +2,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useAccounts } from "../useAccounts.js";
 import { dbPut, dbGetAll } from "../useDB.js";
+import BulkCaptions, { pickCaption } from "../components/BulkCaptions.jsx";
 
 // ─── Plano de aquecimento (7 dias) ───────────────────────────────────────────
 const PLAN = [
@@ -110,7 +111,9 @@ export default function Warmup() {
   const [startDate, setStartDate] = useState(() => {
     const d = new Date(); d.setHours(9,0,0,0); return d.toISOString().slice(0,16);
   });
-  const inputRef = useRef();
+  const inputRef    = useRef();
+  const [bulkCaptions, setBulkCaptions] = useState("");
+  const [captionMode,  setCaptionMode]  = useState("roundrobin");
 
   const warmupAccs = accounts.filter(a => warmupDay(a.connected_at||new Date().toISOString()) <= 7);
 
@@ -155,20 +158,27 @@ export default function Warmup() {
   const confirmSchedule = async () => {
     if (!slots.length) return;
     setSaving(true);
-    for (const s of slots) {
+    const parsedCaptions = bulkCaptions.split("\n").map(l => l.trim()).filter(Boolean);
+    for (let i = 0; i < slots.length; i++) {
+      const s = slots[i];
+      const caption = parsedCaptions.length > 0 ? pickCaption(parsedCaptions, captionMode, i) : "";
       await dbPut("queue", {
-        id:          s.id,
-        accountId:   s.accountId,
-        username:    s.username,
-        mediaUrl:    s.mediaUrl,
-        mediaType:   "VIDEO",
-        postType:    "REEL",
-        caption:     "",
-        scheduledAt: s.scheduledAt,
-        status:      "pending",
-        warmup:      true,
-        warmupDay:   s.day,
-        created_at:  new Date().toISOString(),
+        id:           s.id,
+        accountId:    s.accountId,
+        username:     s.username,
+        mediaUrl:     s.mediaUrl,
+        mediaUrls:    [s.mediaUrl],
+        mediaType:    "VIDEO",
+        postType:     "REEL",
+        caption,
+        bulkCaptions: parsedCaptions,
+        captionMode,
+        accounts:     [{ id: s.accountId, username: s.username }],
+        scheduledAt:  new Date(s.scheduledAt).getTime(),
+        status:       "pending",
+        warmup:       true,
+        warmupDay:    s.day,
+        created_at:   new Date().toISOString(),
       });
     }
     setSaving(false);
@@ -325,6 +335,17 @@ export default function Warmup() {
                   ({Math.floor(doneReels.length/warmupAccs.length)} por conta)
                 </div>
               )}
+
+              {/* Legendas em Massa */}
+              <div style={{ marginTop:16 }}>
+                <BulkCaptions
+                  value={bulkCaptions}
+                  onChange={setBulkCaptions}
+                  mode={captionMode}
+                  onModeChange={setCaptionMode}
+                  previewCount={Math.min(doneReels.length || 3, 6)}
+                />
+              </div>
             </>
           )}
         </div>

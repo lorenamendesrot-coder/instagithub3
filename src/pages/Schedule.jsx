@@ -4,6 +4,7 @@ import MediaPreview from "../MediaPreview.jsx";
 import Modal from "../Modal.jsx";
 import CatboxUploader from "../CatboxUploader.jsx";
 import { dbGetAll, dbPut, dbPutMany, dbDelete, dbClear } from "../useDB.js";
+import BulkCaptions, { pickCaption } from "../components/BulkCaptions.jsx";
 
 const POST_TYPES = [
   { value: "FEED",  label: "Feed",  desc: "Foto ou vídeo", icon: "🖼" },
@@ -210,6 +211,8 @@ export default function Schedule() {
   const [intervalMin, setIntervalMin] = useState(0);
   const [intervalMax, setIntervalMax] = useState(20);
   const [loop,        setLoop]        = useState(false);
+  const [bulkCaptions,  setBulkCaptions]  = useState("");
+  const [captionMode,   setCaptionMode]   = useState("roundrobin");
 
   // ── NOVOS: Quantidade por Ciclo + Seleção de Mídias ──
   const [quantityPerCycle, setQuantityPerCycle] = useState(1);
@@ -251,38 +254,48 @@ export default function Schedule() {
   };
 
   // ── Lógica de geração da fila com suporte a quantityPerCycle ──
+  // Parseia bulk captions
+  const parsedCaptions = bulkCaptions.split("\n").map(l => l.trim()).filter(Boolean);
+
   const buildQueueItems = (startTs) => {
     const urls = validUrls.map((x) => x.url.trim());
     const items = [];
     let ts = startTs;
     const qty = Math.max(1, quantityPerCycle);
+    let globalIdx = 0; // índice global para round-robin de captions
 
     const intervalMs = () => randomBetween(
       Math.round(intervalMin * 60000),
       Math.max(Math.round(intervalMax * 60000), Math.round(intervalMin * 60000) + 1000)
     );
 
-    // Retorna `qty` URLs para a conta no índice `accIdx`
     const pickUrls = (accIdx) => {
       if (mediaSameForAll === "same") {
-        // Circula no pool para pegar qty itens começando do início
         return Array.from({ length: qty }, (_, i) => urls[i % urls.length]);
       } else {
-        // Distribui: cada conta pega URLs em posições diferentes
         const shuffled = shuffle(urls);
         return Array.from({ length: qty }, (_, i) => shuffled[(accIdx * qty + i) % shuffled.length]);
       }
     };
 
+    // Resolve a legenda para um índice global
+    const resolveCaption = (idx) => {
+      if (parsedCaptions.length === 0) return caption;
+      return pickCaption(parsedCaptions, captionMode, idx);
+    };
+
     if (distMode === "all") {
-      // Uma entrada: todas as contas, qty mídias
       const mediaUrls = pickUrls(0);
+      const resolvedCaption = resolveCaption(globalIdx++);
       items.push({
         id: `${Date.now()}-all-${Math.random().toString(36).slice(2)}`,
         postType, mediaType,
         mediaUrl: mediaUrls[0],
         mediaUrls,
-        caption, accounts: selectedAccounts,
+        caption: resolvedCaption,
+        bulkCaptions: parsedCaptions,
+        captionMode,
+        accounts: selectedAccounts,
         scheduledAt: ts, status: "pending",
         loop, runCount: 0, distMode: "all",
         quantityPerCycle: qty, mediaSameForAll,
@@ -295,12 +308,16 @@ export default function Schedule() {
       for (let i = 0; i < shuffledAccs.length; i++) {
         if (i > 0) ts += intervalMs();
         const mediaUrls = pickUrls(i);
+        const resolvedCaption = resolveCaption(globalIdx++);
         items.push({
           id: `${Date.now()}-rnd-${i}-${Math.random().toString(36).slice(2)}`,
           postType, mediaType,
           mediaUrl: mediaUrls[0],
           mediaUrls,
-          caption, accounts: [shuffledAccs[i]],
+          caption: resolvedCaption,
+          bulkCaptions: parsedCaptions,
+          captionMode,
+          accounts: [shuffledAccs[i]],
           scheduledAt: ts, status: "pending",
           loop, runCount: 0, distMode: "random",
           quantityPerCycle: qty, mediaSameForAll,
@@ -312,14 +329,17 @@ export default function Schedule() {
     } else if (distMode === "roundrobin") {
       for (let i = 0; i < selectedAccounts.length; i++) {
         if (i > 0) ts += intervalMs();
-        // Round-robin: URLs sequenciais por conta
         const mediaUrls = Array.from({ length: qty }, (_, q) => urls[(i * qty + q) % urls.length]);
+        const resolvedCaption = resolveCaption(globalIdx++);
         items.push({
           id: `${Date.now()}-rr-${i}-${Math.random().toString(36).slice(2)}`,
           postType, mediaType,
           mediaUrl: mediaUrls[0],
           mediaUrls,
-          caption, accounts: [selectedAccounts[i]],
+          caption: resolvedCaption,
+          bulkCaptions: parsedCaptions,
+          captionMode,
+          accounts: [selectedAccounts[i]],
           scheduledAt: ts, status: "pending",
           loop, runCount: 0, distMode: "roundrobin",
           quantityPerCycle: qty, mediaSameForAll,
@@ -644,14 +664,15 @@ export default function Schedule() {
             )}
           </div>
 
-          {/* Legenda */}
+          {/* Legendas em Massa */}
           {(postType === "FEED" || postType === "REEL") && (
-            <div className="card">
-              <div className="form-row" style={{ marginBottom: 0 }}>
-                <label>Legenda</label>
-                <textarea placeholder="Escreva a legenda... #hashtags" value={caption} onChange={(e) => setCaption(e.target.value)} style={{ minHeight: 80, fontSize: 13 }} maxLength={2200} />
-              </div>
-            </div>
+            <BulkCaptions
+              value={bulkCaptions}
+              onChange={setBulkCaptions}
+              mode={captionMode}
+              onModeChange={setCaptionMode}
+              previewCount={Math.min(selectedAccounts.length || 3, 6)}
+            />
           )}
 
           {/* Horário */}
