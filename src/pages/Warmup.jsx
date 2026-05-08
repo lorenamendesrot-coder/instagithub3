@@ -42,7 +42,7 @@ const WARMUP_PRESET_2D = {
 
 const JITTER_MIN_RANGE = [-40, 40];
 const JITTER_SEC_RANGE = [0, 59];
-const NEW_ACCOUNT_DAYS = 4;
+const NEW_ACCOUNT_DAYS = 2;
 
 const TABS = [
   { id: "upload",   icon: "📤", label: "Upload"         },
@@ -217,8 +217,9 @@ function shadowScore(insights) {
 
 // ─── Sub-componentes ──────────────────────────────────────────────────────────
 
-function MediaUploadZone({ typeConfig, files, onAddFiles, onRemoveFile, onUploadAll, uploading }) {
-  const [dragging, setDragging] = useState(false);
+function MediaUploadZone({ typeConfig, files, onAddFiles, onRemoveFile, onUploadAll, uploading, urlInput, onUrlInputChange, onAddUrl }) {
+  const [dragging,  setDragging]  = useState(false);
+  const [showUrl,   setShowUrl]   = useState(false);
   const inputRef = useRef();
 
   const onDrop = useCallback((e) => {
@@ -231,6 +232,16 @@ function MediaUploadZone({ typeConfig, files, onAddFiles, onRemoveFile, onUpload
   const done    = myFiles.filter((f) => f.status === "done");
   const errors  = myFiles.filter((f) => f.status === "error");
   const idle    = myFiles.filter((f) => f.status === "idle");
+
+  // Valida e adiciona URLs (aceita múltiplas, uma por linha)
+  const handleAddUrl = () => {
+    const urls = (urlInput || "").split(/[
+,]/).map((u) => u.trim()).filter((u) => u.startsWith("http"));
+    if (!urls.length) return;
+    onAddUrl(typeConfig.id, urls);
+    onUrlInputChange(typeConfig.id, "");
+    setShowUrl(false);
+  };
 
   return (
     <div style={{ marginBottom: 4 }}>
@@ -256,7 +267,7 @@ function MediaUploadZone({ typeConfig, files, onAddFiles, onRemoveFile, onUpload
           border: `2px dashed ${dragging ? "var(--accent)" : "var(--border2)"}`,
           borderRadius: 10, padding: "16px", textAlign: "center", cursor: "pointer",
           background: dragging ? "rgba(124,92,252,0.08)" : "var(--bg3)",
-          transition: "all 0.15s", marginBottom: myFiles.length ? 8 : 0,
+          transition: "all 0.15s", marginBottom: 8,
         }}
       >
         <div style={{ fontSize: 20, marginBottom: 3 }}>{typeConfig.icon}</div>
@@ -271,6 +282,44 @@ function MediaUploadZone({ typeConfig, files, onAddFiles, onRemoveFile, onUpload
           style={{ display: "none" }}
           onChange={(e) => e.target.files.length && onAddFiles(typeConfig.id, e.target.files)}
         />
+      </div>
+
+      {/* ── Upload por URL ── */}
+      <div style={{ marginBottom: myFiles.length ? 8 : 0 }}>
+        <button
+          className="btn btn-ghost btn-xs"
+          style={{ width: "100%", justifyContent: "center", gap: 5, marginBottom: showUrl ? 6 : 0 }}
+          onClick={(e) => { e.stopPropagation(); setShowUrl((p) => !p); }}
+        >
+          <span>🔗</span>
+          {showUrl ? "Ocultar campo de URL" : "Adicionar por URL"}
+        </button>
+
+        {showUrl && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+            <textarea
+              placeholder={"Cole uma ou mais URLs (uma por linha):
+https://files.catbox.moe/abc123.mp4
+https://r2.example.com/video2.mp4"}
+              value={urlInput || ""}
+              onChange={(e) => onUrlInputChange(typeConfig.id, e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && e.ctrlKey) { e.preventDefault(); handleAddUrl(); } }}
+              style={{ fontSize: 11, minHeight: 70, resize: "vertical", fontFamily: "monospace" }}
+            />
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <button
+                className="btn btn-primary btn-xs"
+                style={{ flex: 1 }}
+                onClick={handleAddUrl}
+                disabled={!(urlInput || "").trim()}
+              >
+                ✓ Adicionar URL{(urlInput || "").split(/[
+,]/).filter((u) => u.trim().startsWith("http")).length > 1 ? "s" : ""}
+              </button>
+              <span style={{ fontSize: 10, color: "var(--muted)" }}>Ctrl+Enter</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {myFiles.length > 0 && (
@@ -400,6 +449,8 @@ export default function Warmup() {
   const [startDate,    setStartDate]    = useState(() => new Date().toISOString().slice(0, 10));
   const [distribution, setDistribution] = useState("roundrobin");
   const [useNewOnly,   setUseNewOnly]   = useState(true);
+  const [selectedAccIds, setSelectedAccIds] = useState(null); // null = todas selecionadas
+  const [urlInputs,    setUrlInputs]    = useState({ reels: "", feed: "", stories: "" });
   const [dayConfig,    setDayConfig]    = useState(WARMUP_PRESET_2D.days);
   const [queue,        setQueue]        = useState([]);
   const [saving,       setSaving]       = useState(false);
@@ -407,10 +458,29 @@ export default function Warmup() {
   const [dbQueue,      setDbQueue]      = useState([]);
   const [tab,          setTab]          = useState("upload");
 
+  // Contas que passam no filtro de dias
   const eligibleAccounts = useMemo(
     () => accounts.filter((a) => !useNewOnly || isNewAccount(a)),
     [accounts, useNewOnly]
   );
+
+  // Contas efetivamente selecionadas para o aquecimento (null = todas elegíveis)
+  const selectedAccounts = useMemo(
+    () => selectedAccIds === null
+      ? eligibleAccounts
+      : eligibleAccounts.filter((a) => selectedAccIds.includes(a.id)),
+    [eligibleAccounts, selectedAccIds]
+  );
+
+  // Helpers de seleção
+  const toggleAccount = (id) => {
+    setSelectedAccIds((prev) => {
+      const base = prev === null ? eligibleAccounts.map((a) => a.id) : [...prev];
+      return base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
+    });
+  };
+  const selectAll  = () => setSelectedAccIds(null);
+  const selectNone = () => setSelectedAccIds([]);
 
   useEffect(() => {
     if (tab === "monitor") {
@@ -429,6 +499,31 @@ export default function Warmup() {
 
   const removeFile = useCallback((typeId, fileId) => {
     setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].filter((f) => f.id !== fileId) }));
+  }, []);
+
+  // Adiciona mídias a partir de URLs externas (já prontas, sem upload)
+  const addFilesByUrl = useCallback((typeId, urls) => {
+    const entries = urls.map((url) => {
+      const name = url.split("/").pop().split("?")[0] || "media";
+      return {
+        id:       `${typeId}-url-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        file:     null,
+        name,
+        size:     0,
+        status:   "done",   // já está pronta — não precisa de upload
+        progress: 100,
+        url,
+        error:    "",
+        typeId,
+        fromUrl:  true,
+      };
+    });
+    setFiles((prev) => ({ ...prev, [typeId]: [...(prev[typeId] || []), ...entries] }));
+  }, []);
+
+  // Atualiza o campo de texto de URL por tipo
+  const updateUrlInput = useCallback((typeId, value) => {
+    setUrlInputs((prev) => ({ ...prev, [typeId]: value }));
   }, []);
 
   const uploadAll = useCallback(async (typeId) => {
@@ -465,14 +560,14 @@ export default function Warmup() {
 
   const generateQueue = useCallback(() => {
     if (!stats.totalDone) { alert("Faça o upload de pelo menos 1 mídia antes de gerar a fila."); return; }
-    if (!eligibleAccounts.length) { alert("Nenhuma conta elegível encontrada."); return; }
+    if (!selectedAccounts.length) { alert("Selecione pelo menos uma conta para o aquecimento."); return; }
     const mediaByType = {
       reels:   (files.reels   || []).filter((f) => f.status === "done").map((f) => ({ url: f.url, name: f.name })),
       feed:    (files.feed    || []).filter((f) => f.status === "done").map((f) => ({ url: f.url, name: f.name })),
       stories: (files.stories || []).filter((f) => f.status === "done").map((f) => ({ url: f.url, name: f.name })),
     };
     const generated = buildWarmupQueue({
-      accounts: eligibleAccounts, mediaByType,
+      accounts: selectedAccounts, mediaByType,
       captions: parsedCaptions, captionMode,
       preset: { ...WARMUP_PRESET_2D, days: dayConfig },
       startDateStr: startDate, distribution,
@@ -480,7 +575,7 @@ export default function Warmup() {
     setQueue(generated);
     setSaved(false);
     setTab("preview");
-  }, [files, eligibleAccounts, parsedCaptions, captionMode, dayConfig, startDate, distribution, stats.totalDone]);
+  }, [files, selectedAccounts, parsedCaptions, captionMode, dayConfig, startDate, distribution, stats.totalDone]);
 
   const confirmQueue = useCallback(async () => {
     if (!queue.length) return;
@@ -532,7 +627,7 @@ export default function Warmup() {
         </div>
         <div style={{ display: "flex", gap: 10, flexShrink: 0 }}>
           {[
-            { icon: "👥", value: eligibleAccounts.length, label: "contas novas",   color: "var(--accent)"  },
+            { icon: "👥", value: selectedAccounts.length, label: "contas novas",   color: "var(--accent)"  },
             { icon: "📁", value: stats.totalDone,          label: "mídias prontas", color: "var(--success)" },
             { icon: "📅", value: queue.length,             label: "na fila",        color: "var(--warning)" },
           ].map(({ icon, value, label, color }) => (
@@ -591,6 +686,9 @@ export default function Warmup() {
                   onRemoveFile={removeFile}
                   onUploadAll={uploadAll}
                   uploading={uploading}
+                  urlInput={urlInputs[typeConfig.id]}
+                  onUrlInputChange={updateUrlInput}
+                  onAddUrl={addFilesByUrl}
                 />
               </div>
             ))}
@@ -692,20 +790,59 @@ export default function Warmup() {
                 ⚠️ Nenhuma conta elegível. {useNewOnly ? "Desmarque o filtro ou aguarde contas novas." : "Conecte contas primeiro."}
               </div>
             ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 8 }}>
-                {eligibleAccounts.map((acc) => {
-                  const day = warmupDay(acc.connected_at || new Date().toISOString());
-                  return (
-                    <div key={acc.id} style={{ padding: "8px 12px", borderRadius: 8, background: "var(--bg3)", border: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8 }}>
-                      <div style={{ width: 8, height: 8, borderRadius: "50%", background: isNewAccount(acc) ? "var(--success)" : "var(--muted)", flexShrink: 0 }} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>@{acc.username}</div>
-                        <div style={{ fontSize: 10, color: "var(--muted)" }}>Dia {day}</div>
+              <>
+                {/* Botões de seleção rápida */}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                    {selectedAccounts.length} de {eligibleAccounts.length} selecionada{eligibleAccounts.length !== 1 ? "s" : ""}
+                  </span>
+                  <button className="btn btn-ghost btn-xs" onClick={selectAll}
+                    style={{ color: selectedAccIds === null ? "var(--accent-light)" : undefined }}>
+                    ✓ Todas
+                  </button>
+                  <button className="btn btn-ghost btn-xs" onClick={selectNone}>
+                    ✕ Nenhuma
+                  </button>
+                </div>
+
+                {/* Grid de contas com checkbox */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 8 }}>
+                  {eligibleAccounts.map((acc) => {
+                    const day = warmupDay(acc.connected_at || new Date().toISOString());
+                    const isSelected = selectedAccIds === null || selectedAccIds.includes(acc.id);
+                    return (
+                      <div
+                        key={acc.id}
+                        onClick={() => toggleAccount(acc.id)}
+                        style={{
+                          padding: "8px 12px", borderRadius: 8, cursor: "pointer",
+                          background: isSelected ? "rgba(124,92,252,0.08)" : "var(--bg3)",
+                          border: `1px solid ${isSelected ? "var(--accent)" : "var(--border)"}`,
+                          display: "flex", alignItems: "center", gap: 8,
+                          transition: "all 0.12s",
+                          opacity: isSelected ? 1 : 0.5,
+                        }}
+                      >
+                        {/* Checkbox visual */}
+                        <div style={{
+                          width: 16, height: 16, borderRadius: 4, flexShrink: 0,
+                          border: `2px solid ${isSelected ? "var(--accent)" : "var(--border2)"}`,
+                          background: isSelected ? "var(--accent)" : "transparent",
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          transition: "all 0.12s",
+                        }}>
+                          {isSelected && <span style={{ color: "#fff", fontSize: 10, fontWeight: 900, lineHeight: 1 }}>✓</span>}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>@{acc.username}</div>
+                          <div style={{ fontSize: 10, color: "var(--muted)" }}>Dia {day}</div>
+                        </div>
+                        <div style={{ width: 7, height: 7, borderRadius: "50%", background: isNewAccount(acc) ? "var(--success)" : "var(--muted)", flexShrink: 0 }} />
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              </>
             )}
           </div>
 
@@ -802,14 +939,14 @@ export default function Warmup() {
           <button
             className="btn btn-primary"
             onClick={generateQueue}
-            disabled={!eligibleAccounts.length || !stats.totalDone}
+            disabled={!selectedAccounts.length || !stats.totalDone}
             style={{ width: "100%", padding: "14px", fontSize: 14 }}
           >
             {!stats.totalDone
               ? "📤 Faça upload das mídias primeiro"
-              : !eligibleAccounts.length
+              : !selectedAccounts.length
                 ? "👥 Nenhuma conta elegível"
-                : `🚀 Gerar Fila de Aquecimento — ${eligibleAccounts.length} conta(s)`}
+                : `🚀 Gerar Fila de Aquecimento — ${selectedAccounts.length} conta(s)`}
           </button>
 
           <div style={{ padding: "12px 16px", borderRadius: 10, background: "rgba(245,158,11,0.05)", border: "1px solid rgba(245,158,11,0.15)", fontSize: 11, color: "var(--muted)" }}>
