@@ -221,7 +221,7 @@ export default function Schedule() {
   const [distMode,     setDistMode]     = useState("all");
   const [showUploader, setShowUploader] = useState(false);
   const [bulkUrlText,  setBulkUrlText]  = useState("");
-  const [mediaMode,    setMediaMode]    = useState("upload"); // "upload" | "url"
+  const [showBulkUrl,  setShowBulkUrl]  = useState(false);
   const [editModal,    setEditModal]    = useState(null);
   const [editTime,     setEditTime]     = useState("");
   const [editCaption,  setEditCaption]  = useState("");
@@ -479,20 +479,16 @@ export default function Schedule() {
                 Mídias ({validUrls.length})
               </div>
               <div style={{ display: "flex", gap: 6 }}>
-                {[{ id: "upload", icon: "☁️", label: "Upload mídia" }, { id: "url", icon: "🔗", label: "URL em massa" }].map(({ id, icon, label }) => (
-                  <button key={id} onClick={() => { setMediaMode(id); if (id === "upload") setShowUploader((p) => !p); }} style={{
-                    padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: mediaMode === id ? 700 : 400,
-                    border: `1px solid ${mediaMode === id ? "var(--accent)" : "var(--border)"}`,
-                    background: mediaMode === id ? "rgba(124,92,252,0.12)" : "var(--bg3)",
-                    color: mediaMode === id ? "var(--accent-light)" : "var(--muted)", cursor: "pointer",
-                  }}>
-                    {icon} {label}
-                  </button>
-                ))}
+                <button className={`btn btn-sm ${showUploader ? "btn-primary" : "btn-ghost"}`} onClick={() => setShowUploader((p) => !p)}>
+                  ☁️ Upload mídias
+                </button>
+                <button className={`btn btn-sm ${showBulkUrl ? "btn-primary" : "btn-ghost"}`} onClick={() => setShowBulkUrl((p) => !p)}>
+                  🔗 + URL manual
+                </button>
               </div>
             </div>
             {/* Painel Upload */}
-            {mediaMode === "upload" && showUploader && (
+            {showUploader && (
               <div style={{ marginBottom: 14, padding: "14px", background: "var(--bg3)", borderRadius: 10, border: "1px solid var(--border)" }}>
                 <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 10, color: "var(--accent-light)" }}>☁️ Upload direto para Catbox</div>
                 <CatboxUploader onUrlsReady={handleCatboxUrls} mediaType={mediaType} />
@@ -500,7 +496,7 @@ export default function Schedule() {
             )}
 
             {/* Painel URL em massa */}
-            {mediaMode === "url" && (
+            {showBulkUrl && (
               <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
                 <textarea
                   placeholder={"Cole as URLs, uma por linha:

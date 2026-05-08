@@ -218,8 +218,8 @@ function shadowScore(insights) {
 // ─── Sub-componentes ──────────────────────────────────────────────────────────
 
 function MediaUploadZone({ typeConfig, files, onAddFiles, onRemoveFile, onUploadAll, uploading, urlInput, onUrlInputChange, onAddUrl }) {
-  const [dragging, setDragging] = useState(false);
-  const [mode,     setMode]     = useState("upload");
+  const [dragging,    setDragging]    = useState(false);
+  const [showBulkUrl, setShowBulkUrl] = useState(false);
   const inputRef = useRef();
 
   const onDrop = useCallback((e) => {
@@ -239,6 +239,7 @@ function MediaUploadZone({ typeConfig, files, onAddFiles, onRemoveFile, onUpload
     if (!urls.length) return;
     onAddUrl(typeConfig.id, urls);
     onUrlInputChange(typeConfig.id, "");
+    setShowBulkUrl(false);
   };
 
   const urlCount = (urlInput || "").split(/[
@@ -260,43 +261,37 @@ function MediaUploadZone({ typeConfig, files, onAddFiles, onRemoveFile, onUpload
         )}
       </div>
 
-      {/* Toggle buttons */}
+      {/* 2 botões fixos */}
       <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-        {[{ id: "upload", icon: "☁️", label: "Upload mídia" }, { id: "url", icon: "🔗", label: "URL em massa" }].map(({ id, icon, label }) => (
-          <button key={id} onClick={() => setMode(id)} style={{
-            flex: 1, padding: "8px 10px", borderRadius: 8, fontSize: 11, fontWeight: mode === id ? 700 : 400,
-            border: `1px solid ${mode === id ? "var(--accent)" : "var(--border)"}`,
-            background: mode === id ? "rgba(124,92,252,0.12)" : "var(--bg3)",
-            color: mode === id ? "var(--accent-light)" : "var(--muted)", cursor: "pointer",
-          }}>
-            {icon} {label}
-          </button>
-        ))}
+        <button className="btn btn-ghost btn-sm" style={{ flex: 1 }} onClick={() => inputRef.current?.click()}>
+          ☁️ Upload mídias
+        </button>
+        <button className={`btn btn-sm ${showBulkUrl ? "btn-primary" : "btn-ghost"}`} style={{ flex: 1 }} onClick={() => setShowBulkUrl((p) => !p)}>
+          🔗 + URL manual
+        </button>
+        <input ref={inputRef} type="file" multiple accept={typeConfig.accept} style={{ display: "none" }}
+          onChange={(e) => e.target.files.length && onAddFiles(typeConfig.id, e.target.files)} />
       </div>
 
-      {/* Painel Upload */}
-      {mode === "upload" && (
-        <div
-          onDrop={onDrop}
-          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-          onDragLeave={() => setDragging(false)}
-          onClick={() => inputRef.current?.click()}
-          style={{
-            border: `2px dashed ${dragging ? "var(--accent)" : "var(--border2)"}`,
-            borderRadius: 10, padding: "20px", textAlign: "center", cursor: "pointer",
-            background: dragging ? "rgba(124,92,252,0.08)" : "var(--bg3)",
-            transition: "all 0.15s", marginBottom: 8,
-          }}
-        >
-          <div style={{ fontSize: 22, marginBottom: 4 }}>{typeConfig.icon}</div>
-          <div style={{ fontSize: 12, fontWeight: 600 }}>{dragging ? "Solte aqui" : "Arraste ou clique para selecionar"}</div>
-          <input ref={inputRef} type="file" multiple accept={typeConfig.accept} style={{ display: "none" }}
-            onChange={(e) => e.target.files.length && onAddFiles(typeConfig.id, e.target.files)} />
-        </div>
-      )}
+      {/* Zona de drag & drop (sempre visível) */}
+      <div
+        onDrop={onDrop}
+        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onClick={() => inputRef.current?.click()}
+        style={{
+          border: `2px dashed ${dragging ? "var(--accent)" : "var(--border2)"}`,
+          borderRadius: 10, padding: "16px", textAlign: "center", cursor: "pointer",
+          background: dragging ? "rgba(124,92,252,0.08)" : "var(--bg3)",
+          transition: "all 0.15s", marginBottom: 8,
+        }}
+      >
+        <div style={{ fontSize: 20, marginBottom: 3 }}>{typeConfig.icon}</div>
+        <div style={{ fontSize: 12, fontWeight: 600 }}>{dragging ? "Solte aqui" : "Arraste ou clique"}</div>
+      </div>
 
-      {/* Painel URL em massa */}
-      {mode === "url" && (
+      {/* Painel URL em massa (expande ao clicar no botão) */}
+      {showBulkUrl && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 8 }}>
           <textarea
             placeholder={"Cole as URLs, uma por linha:
@@ -306,7 +301,7 @@ https://cdn.exemplo.com/video3.mp4"}
             value={urlInput || ""}
             onChange={(e) => onUrlInputChange(typeConfig.id, e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && e.ctrlKey) { e.preventDefault(); handleAddUrl(); } }}
-            style={{ fontSize: 11, minHeight: 100, resize: "vertical", fontFamily: "monospace", borderRadius: 8 }}
+            style={{ fontSize: 11, minHeight: 90, resize: "vertical", fontFamily: "monospace", borderRadius: 8 }}
           />
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
             <button className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={handleAddUrl} disabled={!urlCount}>

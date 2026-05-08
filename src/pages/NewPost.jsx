@@ -28,8 +28,8 @@ export default function NewPost() {
   const [toast, setToast]                   = useState(null);
   const [confirmPublish, setConfirmPublish] = useState(false);
 
-  // ✅ Modo de entrada de mídia: "upload" ou "url"
-  const [mediaMode, setMediaMode] = useState("upload");
+  const [showUploader, setShowUploader] = useState(false);
+  const [showBulkUrl,  setShowBulkUrl]  = useState(false);
 
   const isReel = postType === "REEL";
 
@@ -43,7 +43,7 @@ export default function NewPost() {
       setMediaUrl(items[0].url);
       setMediaType(items[0].type);
     }
-    setMediaMode("url"); // volta para URL após upload
+    setShowUploader(false);
   };
 
   const showCaptions = postType === "FEED" || postType === "REEL";
@@ -185,28 +185,23 @@ export default function NewPost() {
               </div>
             </div>
 
-            {/* ✅ Mídia — tabs Upload / URL manual */}
+            {/* Mídia */}
             <div className="card">
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
                 <label style={{ margin: 0 }}>Mídia</label>
-                {/* Tabs de modo */}
                 <div style={{ display: "flex", gap: 6 }}>
-                  {[{ id: "upload", icon: "☁️", label: "Upload mídia" }, { id: "url", icon: "🔗", label: "URL em massa" }].map(({ id, icon, label }) => (
-                    <button key={id} onClick={() => setMediaMode(id)} style={{
-                      padding: "6px 12px", borderRadius: 8, fontSize: 11, fontWeight: mediaMode === id ? 700 : 400,
-                      border: `1px solid ${mediaMode === id ? "var(--accent)" : "var(--border)"}`,
-                      background: mediaMode === id ? "rgba(124,92,252,0.12)" : "var(--bg3)",
-                      color: mediaMode === id ? "var(--accent-light)" : "var(--muted)", cursor: "pointer",
-                    }}>
-                      {icon} {label}
-                    </button>
-                  ))}
+                  <button className={`btn btn-sm ${showUploader ? "btn-primary" : "btn-ghost"}`} onClick={() => setShowUploader((p) => !p)}>
+                    ☁️ Upload mídias
+                  </button>
+                  <button className={`btn btn-sm ${showBulkUrl ? "btn-primary" : "btn-ghost"}`} onClick={() => setShowBulkUrl((p) => !p)}>
+                    🔗 + URL manual
+                  </button>
                 </div>
               </div>
 
               {/* Painel Upload */}
-              {mediaMode === "upload" && (
-                <div style={{ padding: "14px", background: "var(--bg3)", borderRadius: 10, border: "1px solid var(--border)" }}>
+              {showUploader && (
+                <div style={{ marginBottom: 12, padding: "14px", background: "var(--bg3)", borderRadius: 10, border: "1px solid var(--border)" }}>
                   <CatboxUploader onUrlsReady={handleCatboxUrl} mediaType={mediaType} />
                   {mediaUrl && (
                     <div style={{ marginTop: 10, fontSize: 12, color: "var(--success)", display: "flex", alignItems: "center", gap: 6 }}>
@@ -219,22 +214,17 @@ export default function NewPost() {
                 </div>
               )}
 
-              {/* Painel URL em massa */}
-              {mediaMode === "url" && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  <textarea
-                    placeholder={"Cole as URLs, uma por linha:
+              {/* Painel URL manual */}
+              {showBulkUrl && (
+                <textarea
+                  placeholder={"Cole as URLs, uma por linha:
 https://files.catbox.moe/abc.jpg
 https://r2.exemplo.com/video2.mp4
 https://cdn.exemplo.com/img3.png"}
-                    value={mediaUrl}
-                    onChange={(e) => { setMediaUrl(e.target.value); setMediaValid(false); }}
-                    style={{ fontSize: 12, minHeight: 100, resize: "vertical", fontFamily: "monospace", borderRadius: 8 }}
-                  />
-                  <div style={{ fontSize: 10, color: "var(--muted)" }}>
-                    {mediaUrl.split(/[\n,]/).filter((u) => u.trim().startsWith("http")).length} URL(s) detectada(s) · Ctrl+Enter para confirmar
-                  </div>
-                </div>
+                  value={mediaUrl}
+                  onChange={(e) => { setMediaUrl(e.target.value); setMediaValid(false); }}
+                  style={{ fontSize: 12, minHeight: 100, resize: "vertical", fontFamily: "monospace", borderRadius: 8, marginBottom: 8 }}
+                />
               )}
 
               {/* Preview sempre visível se tiver URL */}
