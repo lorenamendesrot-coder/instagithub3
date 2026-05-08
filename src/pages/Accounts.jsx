@@ -768,21 +768,35 @@ export default function Accounts() {
     setLoadingIns((p) => ({ ...p, [acc.id]: false }));
   }, [reloadAccounts]);
 
-  // ── Atualizar todas as contas em fila (300ms entre cada) ──────────────────
+  // ── Atualizar em lotes de 10 em paralelo ───────────────────────────────────
   const handleRefreshAll = useCallback(async () => {
     if (refreshingAll || accounts.length === 0) return;
     setRefreshingAll(true);
     setRefreshProgress({ done: 0, total: accounts.length });
-    for (let i = 0; i < accounts.length; i++) {
-      await fetchInsights(accounts[i], true);
-      setRefreshProgress({ done: i + 1, total: accounts.length });
-      if (i < accounts.length - 1) await new Promise((r) => setTimeout(r, 300));
+    const BATCH = 10;
+    for (let i = 0; i < accounts.length; i += BATCH) {
+      const batch = accounts.slice(i, i + BATCH);
+      await Promise.all(batch.map((acc) => fetchInsights(acc, true)));
+      setRefreshProgress({ done: Math.min(i + BATCH, accounts.length), total: accounts.length });
     }
     setRefreshingAll(false);
   }, [accounts, refreshingAll, fetchInsights]);
 
-  // ── Sem fetch automático — use o botão "Atualizar tudo" ──────────────────
+  // ── Auto-atualização a cada 30 minutos em segundo plano ─────────────────
   const fetchedRef = useRef(false);
+  useEffect(() => {
+    if (accounts.length === 0) return;
+    const INTERVAL_MS = 30 * 60 * 1000;
+    const BATCH = 10;
+    const runSilent = async () => {
+      for (let i = 0; i < accounts.length; i += BATCH) {
+        const batch = accounts.slice(i, i + BATCH);
+        await Promise.all(batch.map((acc) => fetchInsights(acc, true)));
+      }
+    };
+    const timer = setInterval(runSilent, INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [accounts, fetchInsights]);
 
   const openDetail = (acc) => {
     setDetailAcc(acc);
