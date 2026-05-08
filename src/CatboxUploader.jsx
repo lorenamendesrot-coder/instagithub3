@@ -1,4 +1,5 @@
-// CatboxUploader.jsx — upload via proxy Netlify (catbox.moe bloqueia CORS direto do browser)
+// CatboxUploader.jsx — upload DIRETO do browser para R2 via presigned URL
+// Sem limite de tamanho (não passa pelo body da Netlify Function)
 import { useState, useRef, useCallback } from "react";
 
 function formatSize(bytes) {
@@ -11,43 +12,56 @@ function isVideo(name) {
   return ["mp4", "mov", "avi", "mkv", "webm"].includes(name.split(".").pop().toLowerCase());
 }
 
-function readAsBase64(file, onProgress) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onprogress = (e) => {
-      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 50));
-    };
-    reader.onload  = () => resolve(reader.result.split(",")[1]);
-    reader.onerror = () => reject(new Error("Falha ao ler arquivo"));
-    reader.readAsDataURL(file);
-  });
-}
+// 1. Pede presigned URL para a Netlify Function (só metadados — sem arquivo)
+// 2. Faz PUT direto no R2 com XMLHttpRequest (para ter progresso real)
+async function uploadToR2Direct(file, onProgress) {
+  onProgress(2);
 
-// Netlify Functions tem limite de 6MB de body — base64 aumenta ~33%
-// Limite seguro por chunk: ~4MB de arquivo original
-const MAX_DIRECT_BYTES = 4 * 1024 * 1024;
-
-async function uploadToCatbox(file, onProgress) {
-  onProgress(5);
-
-  if (file.size > MAX_DIRECT_BYTES) {
-    throw new Error(`Arquivo muito grande (máx 4MB via proxy). Tamanho: ${formatSize(file.size)}`);
-  }
-
-  const fileBase64 = await readAsBase64(file, onProgress); // 0-50%
-  onProgress(55);
-
-  const res = await fetch("/api/catbox-proxy", {
+  // Passo 1: obter presigned URL
+  const presignRes = await fetch("/api/r2-presign", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ fileBase64, fileName: file.name, mimeType: file.type || "application/octet-stream" }),
+    body: JSON.stringify({ fileName: file.name, mimeType: file.type || "video/mp4" }),
   });
 
-  onProgress(90);
-  const data = await res.json();
-  if (!res.ok || !data.url) throw new Error(data.error || `Erro ${res.status}`);
+  if (!presignRes.ok) {
+    const err = await presignRes.json().catch(() => ({}));
+    throw new Error(err.error || `Erro ao gerar URL (${presignRes.status})`);
+  }
+
+  const { presignedUrl, publicUrl } = await presignRes.json();
+  onProgress(5);
+
+  // Passo 2: upload direto com progresso real via XHR
+  await new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const pct = Math.round((e.loaded / e.total) * 93) + 5; // 5–98%
+        onProgress(pct);
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status === 200) {
+        resolve();
+      } else {
+        reject(new Error(`R2 recusou o upload (HTTP ${xhr.status}). Verifique as permissões do bucket.`));
+      }
+    };
+
+    xhr.onerror   = () => reject(new Error("Erro de rede durante o upload para R2"));
+    xhr.ontimeout = () => reject(new Error("Timeout no upload (arquivo muito grande ou conexão lenta)"));
+    xhr.timeout   = 5 * 60 * 1000; // 5 minutos
+
+    xhr.open("PUT", presignedUrl);
+    xhr.setRequestHeader("Content-Type", file.type || "video/mp4");
+    xhr.send(file);
+  });
+
   onProgress(100);
-  return data.url;
+  return publicUrl;
 }
 
 export default function CatboxUploader({ onUrlsReady }) {
@@ -85,7 +99,7 @@ export default function CatboxUploader({ onUrlsReady }) {
       setFiles((p) => p.map((f) => f.id === entry.id
         ? { ...f, status: "uploading", progress: 0, error: "" } : f));
       try {
-        const url = await uploadToCatbox(entry.file, (progress) => {
+        const url = await uploadToR2Direct(entry.file, (progress) => {
           setFiles((p) => p.map((f) => f.id === entry.id ? { ...f, progress } : f));
         });
         setFiles((p) => p.map((f) => f.id === entry.id
@@ -106,8 +120,8 @@ export default function CatboxUploader({ onUrlsReady }) {
   };
 
   const getProgressLabel = (f) => {
-    if (f.progress < 50) return "Lendo arquivo...";
-    if (f.progress < 90) return `Enviando... ${f.progress}%`;
+    if (f.progress < 5)  return "Preparando...";
+    if (f.progress < 98) return `Enviando... ${f.progress}%`;
     return "Finalizando...";
   };
 
@@ -133,7 +147,7 @@ export default function CatboxUploader({ onUrlsReady }) {
           {dragging ? "Solte para adicionar" : "Arraste arquivos ou clique para selecionar"}
         </div>
         <div style={{ fontSize: 12, color: "var(--muted)" }}>
-          Imagens (jpg, png, webp) · Vídeos (mp4, mov, webm) · Máx 4MB por arquivo
+          Imagens (jpg, png, webp) · Vídeos (mp4, mov, webm) · Sem limite de tamanho
         </div>
         <input ref={inputRef} type="file" multiple accept="image/*,video/*"
           style={{ display: "none" }}
@@ -202,7 +216,7 @@ export default function CatboxUploader({ onUrlsReady }) {
               style={{ flex: 1 }}>
               {uploading
                 ? <><span className="spinner" /> Enviando...</>
-                : `☁️ Enviar ${idleFiles.length + errorFiles.length} arquivo(s) para Catbox`}
+                : `☁️ Enviar ${idleFiles.length + errorFiles.length} arquivo(s)`}
             </button>
             {doneFiles.length > 0 && (
               <button className="btn btn-success"
