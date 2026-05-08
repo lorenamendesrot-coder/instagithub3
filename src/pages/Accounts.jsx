@@ -288,10 +288,75 @@ function HealthOverview({ accounts, insights, loadingMap, onRefreshAll, refreshi
   );
 }
 
+// ── Modal: Renomear conta (apelido local) ─────────────────────────────────────
+function RenameModal({ acc, onClose, onSaved }) {
+  const [nickname, setNickname] = useState(acc.nickname || acc.name || "");
+  const [saving,   setSaving]   = useState(false);
+
+  const save = async () => {
+    setSaving(true);
+    const updated = { ...acc, nickname: nickname.trim() || acc.username };
+    await onSaved(updated);
+    onClose();
+    setSaving(false);
+  };
+
+  return (
+    <div onClick={(e) => e.target === e.currentTarget && onClose()} style={{
+      position: "fixed", inset: 0, zIndex: 4000,
+      background: "rgba(0,0,0,0.75)", backdropFilter: "blur(5px)",
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
+    }}>
+      <div style={{ background: "var(--bg2)", border: "1px solid var(--border2)", borderRadius: 16, width: "100%", maxWidth: 400, boxShadow: "0 24px 64px rgba(0,0,0,0.7)", overflow: "hidden" }}>
+        <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 12 }}>
+          <Avatar acc={acc} size={36} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: 14 }}>✏️ Editar nome da conta</div>
+            <div style={{ fontSize: 11, color: "var(--muted)" }}>@{acc.username}</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", color: "var(--muted)", fontSize: 22, padding: "0 4px" }}>×</button>
+        </div>
+        <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", display: "block", marginBottom: 6 }}>
+              Apelido / Nome de exibição
+            </label>
+            <input
+              type="text"
+              value={nickname}
+              onChange={(e) => setNickname(e.target.value)}
+              placeholder={acc.username}
+              maxLength={50}
+              autoFocus
+              onKeyDown={(e) => e.key === "Enter" && save()}
+              style={{ width: "100%", boxSizing: "border-box" }}
+            />
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+              Apenas visível aqui no gerenciador. Não altera nada no Instagram.
+            </div>
+          </div>
+          {nickname.trim() && nickname.trim() !== acc.username && (
+            <div style={{ padding: "8px 12px", borderRadius: 8, background: "rgba(124,92,252,0.08)", border: "1px solid rgba(124,92,252,0.2)", fontSize: 12, color: "var(--muted)" }}>
+              Vai aparecer como: <strong style={{ color: "var(--accent-light)" }}>{nickname.trim()}</strong> <span style={{ opacity: 0.6 }}>(@{acc.username})</span>
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 10 }}>
+            <button className="btn btn-primary" style={{ flex: 1 }} onClick={save} disabled={saving}>
+              {saving ? "Salvando..." : "Salvar nome"}
+            </button>
+            <button className="btn btn-ghost" onClick={onClose} disabled={saving}>Cancelar</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Modal: Adicionar via Page ID ──────────────────────────────────────────────
 function AddViaPageModal({ onClose, onAdded }) {
   const [pageId,    setPageId]    = useState("");
   const [pageToken, setPageToken] = useState("");
+  const [nickname,  setNickname]  = useState("");
   const [loading,   setLoading]   = useState(false);
   const [error,     setError]     = useState(null);
   const [preview,   setPreview]   = useState(null); // dados validados antes de confirmar
@@ -327,7 +392,7 @@ function AddViaPageModal({ onClose, onAdded }) {
 
   const confirm = async () => {
     if (!preview) return;
-    await onAdded(preview);
+    await onAdded({ ...preview, nickname: nickname.trim() || undefined });
     onClose();
   };
 
@@ -405,6 +470,25 @@ function AddViaPageModal({ onClose, onAdded }) {
             />
             <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
               Token de longa duração recomendado (60 dias). O token será renovado automaticamente.
+            </div>
+          </div>
+
+          {/* Campo Apelido (opcional) */}
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", display: "block", marginBottom: 6 }}>
+              Apelido <span style={{ color: "var(--muted)", fontWeight: 400 }}>(opcional)</span>
+            </label>
+            <input
+              type="text"
+              value={nickname}
+              onChange={(e) => setNickname(e.target.value)}
+              placeholder="Ex: Conta Principal, Loja SP..."
+              maxLength={50}
+              style={{ width: "100%", boxSizing: "border-box" }}
+              disabled={loading}
+            />
+            <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+              Nome de exibição no gerenciador. Não altera nada no Instagram.
             </div>
           </div>
 
@@ -525,7 +609,7 @@ function AccountDetailModal({ acc, insights, loadingInsights, onClose, onEdit, o
           </div>
 
           <div style={{ marginTop: 10, marginBottom: 14 }}>
-            <div style={{ fontWeight: 700, fontSize: 17 }}>{acc.name || acc.username}</div>
+            <div style={{ fontWeight: 700, fontSize: 17 }}>{acc.nickname || acc.name || acc.username}</div>
             <div style={{ fontSize: 13, color: "var(--muted)" }}>@{acc.username}</div>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
               <span className="badge badge-purple">{acc.account_type || "BUSINESS"}</span>
@@ -857,6 +941,7 @@ export default function Accounts() {
   const [insights,        setInsights]        = useState({});
   const [loadingIns,      setLoadingIns]      = useState({});
   const [showPageIdModal, setShowPageIdModal] = useState(false);
+  const [renamingAcc,     setRenamingAcc]     = useState(null);
   const [refreshingAll,   setRefreshingAll]   = useState(false);
   const [refreshProgress, setRefreshProgress] = useState({ done: 0, total: 0 });
 
@@ -978,6 +1063,11 @@ export default function Accounts() {
     setEditingAcc(null);
   };
 
+  // Renomeia conta (apelido local)
+  const handleRename = async (updated) => {
+    await addAccounts([updated]);
+  };
+
   // Chamado pelo AddViaPageModal após o usuário confirmar a prévia
   const handleAddViaPage = async (account) => {
     await addAccounts([account]);
@@ -1041,6 +1131,15 @@ export default function Accounts() {
         />
       )}
 
+      {/* Modal renomear */}
+      {renamingAcc && (
+        <RenameModal
+          acc={renamingAcc}
+          onClose={() => setRenamingAcc(null)}
+          onSaved={handleRename}
+        />
+      )}
+
       {accounts.length === 0 ? (
         <div className="empty">
           <div className="empty-icon">📱</div>
@@ -1079,6 +1178,18 @@ export default function Accounts() {
                   style={{ display: "flex", flexDirection: "column", gap: 12, cursor: "pointer", position: "relative" }}
                   onClick={() => openDetail(acc)}
                 >
+                  {/* Botão renomear */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setRenamingAcc(acc); }}
+                    title="Editar nome"
+                    style={{
+                      position: "absolute", top: 8, right: 36,
+                      background: "var(--bg3)", border: "1px solid var(--border)",
+                      borderRadius: 6, padding: "3px 7px", fontSize: 11,
+                      color: "var(--muted)", cursor: "pointer", lineHeight: 1,
+                    }}
+                  >✏️</button>
+
                   {/* Botão refresh individual no canto superior direito */}
                   <button
                     onClick={(e) => { e.stopPropagation(); fetchInsights(acc, true); }}
@@ -1099,7 +1210,7 @@ export default function Accounts() {
                     <Avatar acc={{ ...acc, account_status: ins?.account_status }} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontWeight: 700, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {ins?.name || acc.name || acc.username || "—"}
+                        {acc.nickname || ins?.name || acc.name || acc.username || "—"}
                       </div>
                       <div style={{ fontSize: 12, color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         @{ins?.username || acc.username || "—"}
