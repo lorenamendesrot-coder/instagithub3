@@ -205,7 +205,7 @@ export default function Schedule() {
   const [mediaType,   setMediaType]   = useState("IMAGE");
   const [caption,     setCaption]     = useState("");
   const [selectedIds, setSelectedIds] = useState([]);
-  const [urlList,     setUrlList]     = useState([{ id: 1, url: "", type: "IMAGE" }]);
+  const [urlList,     setUrlList]     = useState([]);
   const [previewIdx,  setPreviewIdx]  = useState(0);
   const [startTime,   setStartTime]   = useState(nowPlus(1));
   const [intervalMin, setIntervalMin] = useState(0);
@@ -374,7 +374,7 @@ export default function Schedule() {
     if (startTs <= Date.now()) return alert("O horário precisa ser no futuro");
     const items = buildQueueItems(startTs);
     await addBatch(items);
-    setUrlList([{ id: 1, url: "", type: isReel ? "VIDEO" : mediaType }]);
+    setUrlList([]);
     setCaption("");
     setSelectedIds([]);
     setQuantityPerCycle(1);
@@ -474,18 +474,18 @@ export default function Schedule() {
 
           {/* Mídias */}
           <div className="card">
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-              <div style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                Mídias ({validUrls.length})
-              </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                <button className={`btn btn-sm ${showUploader ? "btn-primary" : "btn-ghost"}`} onClick={() => setShowUploader((p) => !p)}>
-                  ☁️ Upload mídias
-                </button>
-                <button className={`btn btn-sm ${showBulkUrl ? "btn-primary" : "btn-ghost"}`} onClick={() => setShowBulkUrl((p) => !p)}>
-                  🔗 + URL manual
-                </button>
-              </div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+              <button className={`btn btn-sm ${showUploader ? "btn-primary" : "btn-ghost"}`} onClick={() => setShowUploader((p) => !p)}>
+                ☁️ Upload mídias
+              </button>
+              <button className={`btn btn-sm ${showBulkUrl ? "btn-primary" : "btn-ghost"}`} onClick={() => setShowBulkUrl((p) => !p)}>
+                🔗 + URL manual
+              </button>
+              {validUrls.length > 0 && (
+                <span style={{ fontSize: 11, color: "var(--muted)", alignSelf: "center", marginLeft: 4 }}>
+                  ✓ {validUrls.length} URL{validUrls.length > 1 ? "s" : ""}
+                </span>
+              )}
             </div>
             {/* Painel Upload */}
             {showUploader && (
@@ -515,23 +515,12 @@ export default function Schedule() {
               </div>
             )}
 
-            {/* Lista de URLs adicionadas */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {urlList.map((item, idx) => (
-                <div key={item.id} style={{ display: "flex", gap: 7, alignItems: "center" }}>
-                  <span style={{ fontSize: 11, color: "var(--muted)", minWidth: 20, textAlign: "right", fontWeight: 600 }}>{idx + 1}.</span>
-                  <span style={{ fontSize: 14, flexShrink: 0 }}>{item.type === "VIDEO" ? "🎬" : "🖼"}</span>
-                  <input
-                    type="url" placeholder="https://files.catbox.moe/..."
-                    value={item.url} onChange={(e) => setUrl(item.id, e.target.value)} onFocus={() => setPreviewIdx(idx)}
-                    style={{ flex: 1, fontSize: 12, padding: "8px 10px" }}
-                  />
-                  {urlList.length > 1 && (
-                    <button className="btn btn-ghost btn-xs" onClick={() => removeUrl(item.id)} style={{ color: "var(--danger)", flexShrink: 0 }}>✕</button>
-                  )}
-                </div>
-              ))}
-            </div>
+            {/* Contador de URLs adicionadas */}
+            {validUrls.length > 0 && (
+              <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+                ✓ {validUrls.length} URL{validUrls.length > 1 ? "s" : ""} adicionada{validUrls.length > 1 ? "s" : ""}
+              </div>
+            )}
             {activeUrl && (
               <div style={{ marginTop: 12 }}>
                 <MediaPreview url={activeUrl} mediaType={isReel ? "VIDEO" : mediaType} onTypeDetected={!isReel ? setMediaType : undefined} />
