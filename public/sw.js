@@ -1,4 +1,4 @@
-// Service Worker — Insta Manager Scheduler v4
+// Service Worker — Insta Manager Scheduler v5 (com suporte a mediaUrls por ciclo)
 const TICK_INTERVAL = 20000;
 
 self.addEventListener("install", () => self.skipWaiting());
@@ -26,52 +26,78 @@ async function runItem(item) {
   notifyClients({ type: "QUEUE_UPDATE" });
 
   try {
-    // FIX CRITICO: usar self.location.origin + caminho direto da function
     const origin = self.location.origin;
     const apiUrl = `${origin}/.netlify/functions/publish`;
 
-    const res = await fetch(apiUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        accounts: item.accounts,
-        media_url: item.mediaUrl,
-        media_type: item.mediaType,
+    // Suporte a múltiplas mídias por ciclo (novo campo mediaUrls)
+    // Retrocompatível: se não tiver mediaUrls, usa mediaUrl legado
+    const urlsToPost = item.mediaUrls && item.mediaUrls.length > 0
+      ? item.mediaUrls
+      : [item.mediaUrl];
+
+    let totalSuccesses = 0;
+    let totalResults = [];
+
+    for (let mi = 0; mi < urlsToPost.length; mi++) {
+      const mediaUrl = urlsToPost[mi];
+
+      // Pequeno delay entre mídias do mesmo ciclo (exceto a primeira)
+      if (mi > 0) await sleep(3000);
+
+      const res = await fetch(apiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accounts: item.accounts,
+          media_url: mediaUrl,
+          media_type: item.mediaType,
+          post_type: item.postType,
+          captions: item.captions || {},
+          default_caption: item.caption || "",
+          delay_seconds: 0,
+        }),
+      });
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      const data = await res.json();
+      const results = data.results || [];
+      totalResults = [...totalResults, ...results];
+      totalSuccesses += results.filter((r) => r.success).length;
+
+      await appendHistory({
+        id: Date.now() + mi,
         post_type: item.postType,
-        captions: item.captions || {},
+        media_url: mediaUrl,
+        media_type: item.mediaType,
         default_caption: item.caption || "",
-        delay_seconds: 0,
-      }),
-    });
-
-    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-    const data = await res.json();
-    const results = data.results || [];
-    const successCount = results.filter((r) => r.success).length;
-
-    await appendHistory({
-      id: Date.now(),
-      post_type: item.postType,
-      media_url: item.mediaUrl,
-      media_type: item.mediaType,
-      default_caption: item.caption || "",
-      results,
-      created_at: new Date().toISOString(),
-      from_scheduler: true,
-    });
+        results,
+        created_at: new Date().toISOString(),
+        from_scheduler: true,
+        cycle_index: mi,
+        cycle_total: urlsToPost.length,
+      });
+    }
 
     if (item.loop) {
       const next = item.scheduledAt + 24 * 60 * 60 * 1000;
-      await updateItem(item.id, { status: "pending", scheduledAt: next, runCount: (item.runCount || 0) + 1, lastResults: results });
+      await updateItem(item.id, {
+        status: "pending",
+        scheduledAt: next,
+        runCount: (item.runCount || 0) + 1,
+        lastResults: totalResults,
+      });
     } else {
-      await updateItem(item.id, { status: "done", results });
+      await updateItem(item.id, { status: "done", results: totalResults });
     }
 
     try {
       if (Notification.permission === "granted") {
+        const qty = urlsToPost.length;
+        const label = qty > 1 ? `${qty} mídias` : "1 mídia";
         self.registration.showNotification("Insta Manager", {
-          body: `✅ ${successCount}/${results.length} conta(s) publicadas`,
-          icon: "/favicon.ico", tag: `pub-${item.id}`,
+          body: `✅ ${label} · ${totalSuccesses}/${totalResults.length} conta(s) publicadas`,
+          icon: "/favicon.ico",
+          tag: `pub-${item.id}`,
         });
       }
     } catch (_) {}
@@ -80,17 +106,22 @@ async function runItem(item) {
     try {
       if (Notification.permission === "granted") {
         self.registration.showNotification("Insta Manager — Erro", {
-          body: `❌ ${err.message}`, icon: "/favicon.ico", tag: `err-${item.id}`,
+          body: `❌ ${err.message}`,
+          icon: "/favicon.ico",
+          tag: `err-${item.id}`,
         });
       }
     } catch (_) {}
   }
+
   notifyClients({ type: "QUEUE_UPDATE" });
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 function openDB() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open("insta_manager", 4); // ✅ mantido em sincronia com useDB.js
+    const req = indexedDB.open("insta_manager", 4);
     req.onupgradeneeded = (e) => {
       const db = e.target.result;
       if (!db.objectStoreNames.contains("queue")) db.createObjectStore("queue", { keyPath: "id" });
