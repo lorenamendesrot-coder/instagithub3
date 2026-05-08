@@ -42,7 +42,7 @@ const WARMUP_PRESET_2D = {
 
 const JITTER_MIN_RANGE = [-40, 40];
 const JITTER_SEC_RANGE = [0, 59];
-const NEW_ACCOUNT_DAYS = 2;
+const NEW_ACCOUNT_DAYS = 2; // contas com até 2 dias de idade
 
 const TABS = [
   { id: "upload",   icon: "📤", label: "Upload"         },
@@ -782,7 +782,7 @@ export default function Warmup() {
                 onChange={(e) => setUseNewOnly(e.target.checked)}
                 style={{ width: 16, height: 16, accentColor: "var(--accent)" }}
               />
-              Usar apenas contas novas (menos de {NEW_ACCOUNT_DAYS} dias)
+              Usar apenas contas novas ({NEW_ACCOUNT_DAYS} dias ou menos)
             </label>
 
             {eligibleAccounts.length === 0 ? (
