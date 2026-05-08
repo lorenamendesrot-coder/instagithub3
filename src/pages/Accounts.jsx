@@ -951,13 +951,17 @@ export default function Accounts() {
   const SCOPE    = "instagram_basic,instagram_content_publish,instagram_manage_insights,pages_read_engagement,pages_show_list,pages_manage_posts,business_management,pages_manage_metadata";
   const oauthUrl = `https://www.facebook.com/v21.0/dialog/oauth?client_id=${APP_ID}&redirect_uri=${REDIRECT}&scope=${SCOPE}&response_type=code`;
 
+  // Refs para acessar estado mais recente sem re-criar o callback
+  const insightsRef   = useRef(insights);
+  const loadingInsRef = useRef(loadingIns);
+  useEffect(() => { insightsRef.current   = insights;   }, [insights]);
+  useEffect(() => { loadingInsRef.current = loadingIns; }, [loadingIns]);
+
   const fetchInsights = useCallback(async (acc, force = false) => {
-    if (!force && (loadingIns[acc.id] || insights[acc.id])) return;
+    if (!force && (loadingInsRef.current[acc.id] || insightsRef.current[acc.id])) return;
     if (!acc.access_token) return;
     setLoadingIns((p) => ({ ...p, [acc.id]: true }));
     try {
-      // FIX: sempre usar /api/account-insights — nunca chamar graph.facebook.com direto
-      // Chamada direta ao Graph API pelo frontend dá erro 400/CORS com tokens de página
       const res = await fetch("/api/account-insights", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -975,7 +979,6 @@ export default function Accounts() {
       }
 
       if (res.ok && !json.error) {
-        // Persistir dados atualizados no IndexedDB e no Blobs
         const updatedAcc = {
           ...acc,
           username:        json.username        || acc.username,
@@ -988,7 +991,6 @@ export default function Accounts() {
           website:         json.website         || acc.website   || "",
         };
         await dbPut("sessions", updatedAcc);
-        // Persistir também no Blobs para as próximas sessões
         fetch("/api/accounts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1003,7 +1005,7 @@ export default function Accounts() {
       setInsights((p) => ({ ...p, [acc.id]: null }));
     }
     setLoadingIns((p) => ({ ...p, [acc.id]: false }));
-  }, [insights, loadingIns, reloadAccounts]);
+  }, [reloadAccounts]); // removido insights/loadingIns das deps — usa refs
 
   // ── Atualização em massa: fila sequencial com 300ms entre chamadas ─────────
   // Sequencial em vez de paralelo: protege contra rate-limit da Meta Graph API
@@ -1022,12 +1024,13 @@ export default function Accounts() {
 
   const fetchedRef = useRef(false);
   useEffect(() => {
-    if (fetchedRef.current || loading || accounts.length === 0) return;
+    if (loading || accounts.length === 0) return;
+    if (fetchedRef.current) return;
     fetchedRef.current = true;
     accounts.forEach((acc, i) => {
       setTimeout(() => fetchInsights(acc), i * 300);
     });
-  }, [accounts, loading]);
+  }, [accounts, loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openDetail = (acc) => {
     setDetailAcc(acc);
