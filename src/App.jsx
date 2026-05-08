@@ -6,7 +6,9 @@ import Accounts from "./pages/Accounts.jsx";
 import NewPost   from "./pages/NewPost.jsx";
 import Schedule  from "./pages/Schedule.jsx";
 import History   from "./pages/History.jsx";
-import Warmup    from "./pages/Warmup.jsx";
+import Warmup      from "./pages/Warmup.jsx";
+import Protection  from "./pages/Protection.jsx";
+import Logs        from "./pages/Logs.jsx";
 
 // Hooks e componentes isolados
 import { useAccounts }     from "./useAccounts.js";
@@ -152,6 +154,8 @@ export default function App() {
           <Route path="/agendar"   element={<Schedule />} />
           <Route path="/historico"   element={<History />} />
           <Route path="/aquecimento" element={<Warmup />} />
+          <Route path="/protecao"     element={<Protection />} />
+          <Route path="/logs"          element={<Logs />} />
         </Routes>
       </main>
 

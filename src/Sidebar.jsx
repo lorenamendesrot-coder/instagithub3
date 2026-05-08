@@ -8,6 +8,7 @@ const NAV = [
   { to: "/historico",  label: "Histórico",    icon: "📊", desc: "Posts publicados"     },
   { to: "/aquecimento",label: "Aquecimento",  icon: "🔥", desc: "Aquecer contas"       },
   { to: "/protecao",   label: "Proteção",     icon: "🛡️", desc: "Segurança da conta"   },
+  { to: "/logs",        label: "Logs",          icon: "📋", desc: "Checklist e atividade" },
 ];
 
 export default function Sidebar({ accounts, swStatus, oauthUrl, syncing }) {
