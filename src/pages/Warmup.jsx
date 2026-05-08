@@ -234,16 +234,14 @@ function MediaUploadZone({ typeConfig, files, onAddFiles, onRemoveFile, onUpload
   const idle    = myFiles.filter((f) => f.status === "idle");
 
   const handleAddUrl = () => {
-    const urls = (urlInput || "").split(/[
-,]/).map((u) => u.trim()).filter((u) => u.startsWith("http"));
+    const urls = (urlInput || "").split(/[\n,]/).map((u) => u.trim()).filter((u) => u.startsWith("http"));
     if (!urls.length) return;
     onAddUrl(typeConfig.id, urls);
     onUrlInputChange(typeConfig.id, "");
     setShowBulkUrl(false);
   };
 
-  const urlCount = (urlInput || "").split(/[
-,]/).filter((u) => u.trim().startsWith("http")).length;
+  const urlCount = (urlInput || "").split(/[\n,]/).filter((u) => u.trim().startsWith("http")).length;
 
   return (
     <div style={{ marginBottom: 4 }}>
