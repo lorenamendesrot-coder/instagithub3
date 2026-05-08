@@ -93,7 +93,7 @@ export const handler = async (event) => {
 
     // 4. Buscar detalhes da conta Instagram
     const detailRes = await fetch(
-      `${GRAPH}/${igId}?fields=username,name,profile_picture_url,account_type,biography,website,followers_count,follows_count,media_count&access_token=${page_access_token}`
+      `${GRAPH}/${igId}?fields=username,name,profile_picture_url,biography,website,followers_count,follows_count,media_count&access_token=${page_access_token}`
     );
     const detail = await detailRes.json();
 

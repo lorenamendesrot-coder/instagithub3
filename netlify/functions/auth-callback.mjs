@@ -68,8 +68,7 @@ export const handler = async (event) => {
         "biography",
         "website",
         "profile_picture_url",
-        "account_type",
-        "followers_count",
+                "followers_count",
         "follows_count",
         "media_count",
       ].join(",");

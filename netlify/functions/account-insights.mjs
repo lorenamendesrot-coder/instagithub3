@@ -228,7 +228,7 @@ export const handler = async (event) => {
     // ── 1. Perfil ──────────────────────────────────────────────────────────
     const profileFields = [
       "id", "username", "name", "biography", "website",
-      "profile_picture_url", "account_type",
+      "profile_picture_url",
       "followers_count", "follows_count", "media_count",
     ].join(",");
 
@@ -297,7 +297,7 @@ export const handler = async (event) => {
         biography:        profileData.biography || "",
         website:          profileData.website || "",
         profile_picture:  profileData.profile_picture_url || "",
-        account_type:     profileData.account_type,
+        account_type:     profileData.account_type || "BUSINESS",
         followers_count:  profileData.followers_count ?? null,
         follows_count:    profileData.follows_count ?? null,
         media_count:      profileData.media_count ?? null,
