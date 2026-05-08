@@ -70,13 +70,17 @@ export default function App() {
     window.history.replaceState({}, "", window.location.pathname);
 
     if (encoded) {
-      try {
-        const accs = JSON.parse(atob(encoded.replace(/-/g, "+").replace(/_/g, "/")));
-        addAccounts(accs);
-        showToast("success", `${accs.length} conta(s) conectada(s)!`);
-      } catch {
-        showToast("error", "Erro ao importar contas.");
-      }
+      (async () => {
+        try {
+          const accs = JSON.parse(atob(encoded.replace(/-/g, "+").replace(/_/g, "/")));
+          showToast("success", `Salvando ${accs.length} conta(s) na nuvem...`);
+          await addAccounts(accs);
+          showToast("success", `✅ ${accs.length} conta(s) conectada(s) e salvas!`);
+        } catch (err) {
+          console.error("OAuth import error:", err);
+          showToast("error", "Erro ao salvar contas: " + err.message);
+        }
+      })();
     }
     if (error) showToast("error", decodeURIComponent(error));
   }, []);

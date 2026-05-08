@@ -1,12 +1,10 @@
 // useAccounts.js — Contas salvas no Netlify Blobs (persistência em nuvem)
 // Funciona em qualquer PC/navegador — não depende mais do IndexedDB local
-// Fallback: se a API falhar, usa cache local temporário (sessionStorage)
 
 import { useState, useEffect, useCallback } from "react";
 
 const API = "/.netlify/functions/accounts";
 
-// Cache em memória para evitar re-fetches desnecessários na mesma sessão
 let _memCache = null;
 
 export function useAccounts() {
@@ -17,15 +15,17 @@ export function useAccounts() {
   const reload = useCallback(async () => {
     try {
       setLoading(true);
-      const res  = await fetch(API);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const res = await fetch(API);
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`HTTP ${res.status}: ${text}`);
+      }
       const data = await res.json();
       const accs = data.accounts || [];
       _memCache = accs;
       setAccounts(accs);
     } catch (err) {
-      console.error("useAccounts: erro ao carregar contas:", err);
-      // Mantém o estado atual se já tiver algo
+      console.error("[useAccounts] Erro ao carregar contas:", err);
     } finally {
       setLoading(false);
     }
@@ -35,12 +35,12 @@ export function useAccounts() {
     if (!_memCache) reload();
   }, []);
 
-  // Salva uma ou mais contas na nuvem
   const addAccounts = useCallback(async (newAccs) => {
     setSyncing(true);
     try {
-      // Merge local imediato (UX rápida)
-      const merged = [...(accounts)];
+      // Atualiza local imediatamente para UX rápida
+      const current = _memCache || [];
+      const merged  = [...current];
       for (const acc of newAccs) {
         const idx = merged.findIndex((a) => a.id === acc.id);
         const entry = { ...acc, connected_at: acc.connected_at || new Date().toISOString() };
@@ -50,46 +50,48 @@ export function useAccounts() {
       _memCache = merged;
       setAccounts(merged);
 
-      // Persiste na nuvem
+      // Salva na nuvem — lança erro se falhar
       const res = await fetch(API, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accounts: newAccs.map((acc) => ({
-          ...acc,
-          connected_at: acc.connected_at || new Date().toISOString(),
-        })) }),
+        body: JSON.stringify({
+          accounts: newAccs.map((acc) => ({
+            ...acc,
+            connected_at: acc.connected_at || new Date().toISOString(),
+          })),
+        }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-      // Recarrega para garantir consistência
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Erro ao salvar na nuvem: HTTP ${res.status} — ${text}`);
+      }
+
+      // Recarrega para confirmar o que foi salvo
       await reload();
     } catch (err) {
-      console.error("useAccounts: erro ao salvar conta:", err);
+      console.error("[useAccounts] Erro ao salvar conta:", err);
+      throw err; // propaga para o App.jsx mostrar o toast de erro
     } finally {
       setSyncing(false);
     }
-  }, [accounts, reload]);
+  }, [reload]);
 
-  // Remove conta da nuvem
   const removeAccount = useCallback(async (id) => {
-    // Remove local imediatamente
-    const updated = accounts.filter((a) => a.id !== id);
+    const updated = (_memCache || accounts).filter((a) => a.id !== id);
     _memCache = updated;
     setAccounts(updated);
-
     try {
       const res = await fetch(`${API}?id=${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
     } catch (err) {
-      console.error("useAccounts: erro ao remover conta:", err);
-      // Se falhar na nuvem, recarrega para sincronizar
+      console.error("[useAccounts] Erro ao remover conta:", err);
       await reload();
     }
   }, [accounts, reload]);
 
-  // Remove todas as contas
   const clearAllAccounts = useCallback(async () => {
-    const toDelete = [...accounts];
+    const toDelete = [...(_memCache || accounts)];
     _memCache = [];
     setAccounts([]);
     try {
@@ -97,7 +99,7 @@ export function useAccounts() {
         fetch(`${API}?id=${a.id}`, { method: "DELETE" })
       ));
     } catch (err) {
-      console.error("useAccounts: erro ao limpar contas:", err);
+      console.error("[useAccounts] Erro ao limpar contas:", err);
     }
   }, [accounts]);
 
