@@ -1,6 +1,6 @@
 {
   "name": "insta-manager",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -10,7 +10,8 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.21.0",
-    "@netlify/functions": "^2.6.0"
+    "@netlify/functions": "^2.6.0",
+    "@netlify/blobs": "^8.1.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.1",
