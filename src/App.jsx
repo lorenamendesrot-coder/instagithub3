@@ -42,7 +42,7 @@ export const useHistory = () => {
 
 // ─── App ─────────────────────────────────────────────────────────────────────
 export default function App() {
-  const { addAccounts, accounts, reloadAccounts } = useAccounts();
+  const { addAccounts, accounts, reloadAccounts, syncing, loading: accountsLoading } = useAccounts();
   const { toast, showToast }   = useToast();
   const { swStatus }           = useServiceWorker();
   const { oauthUrl }           = useOAuthUrl();
@@ -91,7 +91,7 @@ export default function App() {
         flexShrink: 0,
         position: "sticky", top: 0, height: "100vh",
       }} className="sidebar-desktop">
-        <Sidebar accounts={accounts} swStatus={swStatus} oauthUrl={oauthUrl} />
+        <Sidebar accounts={accounts} swStatus={swStatus} oauthUrl={oauthUrl} syncing={syncing} loading={accountsLoading} />
       </aside>
 
       {/* ── Mobile Header ── */}
@@ -127,7 +127,7 @@ export default function App() {
               animation: "slideInLeft 0.2s ease",
             }}
           >
-            <Sidebar accounts={accounts} swStatus={swStatus} oauthUrl={oauthUrl} />
+            <Sidebar accounts={accounts} swStatus={swStatus} oauthUrl={oauthUrl} syncing={syncing} loading={accountsLoading} />
           </aside>
         </div>
       )}

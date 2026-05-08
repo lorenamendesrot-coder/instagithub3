@@ -10,7 +10,7 @@ const NAV = [
   { to: "/protecao",   label: "Proteção",     icon: "🛡️" },
 ];
 
-export default function Sidebar({ accounts, swStatus, oauthUrl }) {
+export default function Sidebar({ accounts, swStatus, oauthUrl, syncing, loading }) {
   const swInfo = {
     active:      { color: "#22c55e", label: "●", title: "Scheduler ativo" },
     error:       { color: "#ef4444", label: "●", title: "Erro no scheduler" },
@@ -43,7 +43,7 @@ export default function Sidebar({ accounts, swStatus, oauthUrl }) {
       {accounts.length > 0 && (
         <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)" }}>
           <div style={{ fontSize: 10, color: "var(--muted)", fontWeight: 600, letterSpacing: "0.08em", marginBottom: 10, textTransform: "uppercase" }}>
-            Contas ({accounts.length})
+            Contas ({accounts.length}) {syncing && "⟳"}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 7, maxHeight: 180, overflowY: "auto" }}>
             {accounts.map((acc) => (
