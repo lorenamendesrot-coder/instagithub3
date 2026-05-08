@@ -590,7 +590,7 @@ function AccountDetailModal({ acc, insights, loadingInsights, onClose, onEdit, o
       <div style={{
         background: "var(--bg2)", border: "1px solid var(--border2)",
         borderRadius: 18, width: "100%", maxWidth: 420,
-        maxHeight: "90vh", overflowY: "auto",
+        maxHeight: "92vh", display: "flex", flexDirection: "column",
         boxShadow: "0 24px 64px rgba(0,0,0,0.7)", overflow: "hidden",
       }}>
         <div style={{ height: 52, background: "linear-gradient(135deg, #7c5cfc22, #9b4dfc44)", position: "relative", borderBottom: "1px solid var(--border)" }}>
@@ -626,7 +626,7 @@ function AccountDetailModal({ acc, insights, loadingInsights, onClose, onEdit, o
           </div>
         </div>
 
-        <div style={{ padding: "0 16px 16px" }}>
+        <div style={{ padding: "0 16px 16px", overflowY: "auto", flex: 1 }}>
           {loadingInsights ? (
             <div style={{ textAlign: "center", padding: "28px 0" }}>
               <div className="spinner" style={{ width: 22, height: 22, margin: "0 auto 10px" }} />
