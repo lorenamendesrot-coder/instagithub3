@@ -11,7 +11,6 @@ const POST_TYPES = [
   { value: "STORY", label: "Story", desc: "24 horas",      icon: "⭕" },
 ];
 
-// Data atual + N minutos, no fuso local
 function nowPlus(minutes = 1) {
   const d = new Date(Date.now() + minutes * 60000);
   d.setSeconds(0, 0);
@@ -28,7 +27,6 @@ function randomBetween(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-// Embaralha array (Fisher-Yates)
 function shuffle(arr) {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
@@ -38,7 +36,6 @@ function shuffle(arr) {
   return a;
 }
 
-// Hook do scheduler
 function useScheduler(addEntry) {
   const [queue, setQueue] = useState([]);
   const runningRef = useRef(new Set());
@@ -70,39 +67,50 @@ function useScheduler(addEntry) {
         reload();
 
         try {
-          const res = await fetch("/.netlify/functions/publish", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              accounts: item.accounts,
-              media_url: item.mediaUrl,
-              media_type: item.mediaType,
+          const urlsToPost = item.mediaUrls || [item.mediaUrl];
+
+          for (let mi = 0; mi < urlsToPost.length; mi++) {
+            const mediaUrl = urlsToPost[mi];
+            if (mi > 0) await new Promise(r => setTimeout(r, 3000));
+
+            const res = await fetch("/.netlify/functions/publish", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                accounts: item.accounts,
+                media_url: mediaUrl,
+                media_type: item.mediaType,
+                post_type: item.postType,
+                captions: item.captions || {},
+                default_caption: item.caption || "",
+                delay_seconds: 0,
+              }),
+            });
+
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            const results = data.results || [];
+
+            await addEntry({
+              id: Date.now() + mi,
               post_type: item.postType,
-              captions: item.captions || {},
-              default_caption: item.caption || "",
-              delay_seconds: 0,
-            }),
-          });
-
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          const data = await res.json();
-          const results = data.results || [];
-
-          await addEntry({
-            id: Date.now(),
-            post_type: item.postType,
-            media_url: item.mediaUrl,
-            media_type: item.mediaType,
-            default_caption: item.caption,
-            results,
-            created_at: new Date().toISOString(),
-            from_scheduler: true,
-          });
+              media_url: mediaUrl,
+              media_type: item.mediaType,
+              default_caption: item.caption,
+              results,
+              created_at: new Date().toISOString(),
+              from_scheduler: true,
+            });
+          }
 
           if (item.loop) {
-            await dbPut("queue", { ...item, status: "pending", scheduledAt: item.scheduledAt + 86400000, runCount: (item.runCount || 0) + 1 });
+            await dbPut("queue", {
+              ...item, status: "pending",
+              scheduledAt: item.scheduledAt + 86400000,
+              runCount: (item.runCount || 0) + 1,
+            });
           } else {
-            await dbPut("queue", { ...item, status: "done", results });
+            await dbPut("queue", { ...item, status: "done" });
           }
         } catch (err) {
           await dbPut("queue", { ...item, status: "error", error: err.message });
@@ -125,7 +133,6 @@ function useScheduler(addEntry) {
   return { queue, addBatch, updateItem, removeItem, clearQueue, reload };
 }
 
-// Componente de seleção de contas
 function AccountPicker({ accounts, selectedIds, onToggle, onSelectAll, onClear }) {
   return (
     <div>
@@ -173,12 +180,26 @@ function AccountPicker({ accounts, selectedIds, onToggle, onSelectAll, onClear }
   );
 }
 
+function CycleBadge({ count }) {
+  if (count <= 1) return null;
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 4,
+      background: "linear-gradient(135deg, #7c5cfc22, #9b4dfc22)",
+      border: "1px solid var(--accent)", borderRadius: 20,
+      padding: "2px 8px", fontSize: 11, fontWeight: 700,
+      color: "var(--accent-light)",
+    }}>
+      {count}× por ciclo
+    </span>
+  );
+}
+
 export default function Schedule() {
   const { accounts } = useAccounts();
   const { addEntry }  = useHistory();
   const { queue, addBatch, updateItem, removeItem, clearQueue } = useScheduler(addEntry);
 
-  // Form
   const [postType,    setPostType]    = useState("FEED");
   const [mediaType,   setMediaType]   = useState("IMAGE");
   const [caption,     setCaption]     = useState("");
@@ -186,20 +207,16 @@ export default function Schedule() {
   const [urlList,     setUrlList]     = useState([{ id: 1, url: "", type: "IMAGE" }]);
   const [previewIdx,  setPreviewIdx]  = useState(0);
   const [startTime,   setStartTime]   = useState(nowPlus(1));
-  const [intervalMin, setIntervalMin] = useState(0);   // em minutos, padrão 0
-  const [intervalMax, setIntervalMax] = useState(20);  // em minutos, padrão 20
+  const [intervalMin, setIntervalMin] = useState(0);
+  const [intervalMax, setIntervalMax] = useState(20);
   const [loop,        setLoop]        = useState(false);
 
-  // Modo de distribuição
-  const [distMode, setDistMode] = useState("all");
-  // all = todas as contas recebem cada URL
-  // random = cada conta recebe uma URL aleatória do pool
-  // roundrobin = distribui em sequência
+  // ── NOVOS: Quantidade por Ciclo + Seleção de Mídias ──
+  const [quantityPerCycle, setQuantityPerCycle] = useState(1);
+  const [mediaSameForAll,  setMediaSameForAll]  = useState("same");
 
-  // Upload Catbox
+  const [distMode,     setDistMode]     = useState("all");
   const [showUploader, setShowUploader] = useState(false);
-
-  // Modais
   const [editModal,    setEditModal]    = useState(null);
   const [editTime,     setEditTime]     = useState("");
   const [editCaption,  setEditCaption]  = useState("");
@@ -207,15 +224,10 @@ export default function Schedule() {
 
   const isReel = postType === "REEL";
 
-  const handlePostType = (t) => {
-    setPostType(t);
-    if (t === "REEL") setMediaType("VIDEO");
-  };
-
+  const handlePostType = (t) => { setPostType(t); if (t === "REEL") setMediaType("VIDEO"); };
   const toggleAcc = (id) => setSelectedIds((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
   const selectAll = () => setSelectedIds(accounts.map((a) => a.id));
   const clearAll  = () => setSelectedIds([]);
-
   const addUrl    = () => setUrlList((p) => [...p, { id: Date.now(), url: "", type: isReel ? "VIDEO" : mediaType }]);
   const removeUrl = (id) => setUrlList((p) => p.filter((x) => x.id !== id));
   const setUrl    = (id, v) => setUrlList((p) => p.map((x) => x.id === id ? { ...x, url: v } : x));
@@ -226,94 +238,91 @@ export default function Schedule() {
 
   useEffect(() => { setStartTime(nowPlus(1)); }, []);
 
-  // Recebe URLs do CatboxUploader
   const handleCatboxUrls = (items) => {
-    const newEntries = items.map((item, i) => ({
-      id: Date.now() + i,
-      url: item.url,
-      type: item.type,
-    }));
+    const newEntries = items.map((item, i) => ({ id: Date.now() + i, url: item.url, type: item.type }));
     setUrlList((p) => {
-      // Remove entradas vazias e adiciona as novas
       const nonEmpty = p.filter((x) => x.url.trim());
       return nonEmpty.length === 0 ? newEntries : [...nonEmpty, ...newEntries];
     });
-    // Atualiza mediaType para o tipo mais comum entre os uploads
     const hasVideo = newEntries.some((e) => e.type === "VIDEO");
     if (hasVideo && !isReel) setMediaType("VIDEO");
     else if (!hasVideo && !isReel) setMediaType("IMAGE");
     setShowUploader(false);
   };
 
-  // Gera os itens da fila conforme o modo de distribuição
+  // ── Lógica de geração da fila com suporte a quantityPerCycle ──
   const buildQueueItems = (startTs) => {
     const urls = validUrls.map((x) => x.url.trim());
     const items = [];
     let ts = startTs;
+    const qty = Math.max(1, quantityPerCycle);
+
+    const intervalMs = () => randomBetween(
+      Math.round(intervalMin * 60000),
+      Math.max(Math.round(intervalMax * 60000), Math.round(intervalMin * 60000) + 1000)
+    );
+
+    // Retorna `qty` URLs para a conta no índice `accIdx`
+    const pickUrls = (accIdx) => {
+      if (mediaSameForAll === "same") {
+        // Circula no pool para pegar qty itens começando do início
+        return Array.from({ length: qty }, (_, i) => urls[i % urls.length]);
+      } else {
+        // Distribui: cada conta pega URLs em posições diferentes
+        const shuffled = shuffle(urls);
+        return Array.from({ length: qty }, (_, i) => shuffled[(accIdx * qty + i) % shuffled.length]);
+      }
+    };
 
     if (distMode === "all") {
-      // Cada URL → todas as contas, com intervalo entre URLs
-      for (let u = 0; u < urls.length; u++) {
-        if (u > 0) {
-          const delayMs = randomBetween(
-            Math.round(intervalMin * 60000),
-            Math.max(Math.round(intervalMax * 60000), Math.round(intervalMin * 60000) + 1000)
-          );
-          ts += delayMs;
-        }
-        items.push({
-          id: `${Date.now()}-${u}-${Math.random().toString(36).slice(2)}`,
-          postType, mediaType, mediaUrl: urls[u],
-          caption, accounts: selectedAccounts,
-          scheduledAt: ts, status: "pending",
-          loop, runCount: 0, distMode: "all",
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          createdAt: new Date().toISOString(),
-        });
-      }
-    } else if (distMode === "random") {
-      // Pool de URLs embaralhado — cada conta recebe uma URL aleatória do pool
-      // Uma entrada por conta, com URL sorteada
-      const shuffledUrls = shuffle(urls);
-      const shuffledAccs = shuffle(selectedAccounts);
+      // Uma entrada: todas as contas, qty mídias
+      const mediaUrls = pickUrls(0);
+      items.push({
+        id: `${Date.now()}-all-${Math.random().toString(36).slice(2)}`,
+        postType, mediaType,
+        mediaUrl: mediaUrls[0],
+        mediaUrls,
+        caption, accounts: selectedAccounts,
+        scheduledAt: ts, status: "pending",
+        loop, runCount: 0, distMode: "all",
+        quantityPerCycle: qty, mediaSameForAll,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        createdAt: new Date().toISOString(),
+      });
 
+    } else if (distMode === "random") {
+      const shuffledAccs = shuffle(selectedAccounts);
       for (let i = 0; i < shuffledAccs.length; i++) {
-        if (i > 0) {
-          const delayMs = randomBetween(
-            Math.round(intervalMin * 60000),
-            Math.max(Math.round(intervalMax * 60000), Math.round(intervalMin * 60000) + 1000)
-          );
-          ts += delayMs;
-        }
-        const url = shuffledUrls[i % shuffledUrls.length]; // circula se há mais contas do que URLs
+        if (i > 0) ts += intervalMs();
+        const mediaUrls = pickUrls(i);
         items.push({
-          id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2)}`,
-          postType, mediaType, mediaUrl: url,
+          id: `${Date.now()}-rnd-${i}-${Math.random().toString(36).slice(2)}`,
+          postType, mediaType,
+          mediaUrl: mediaUrls[0],
+          mediaUrls,
           caption, accounts: [shuffledAccs[i]],
           scheduledAt: ts, status: "pending",
           loop, runCount: 0, distMode: "random",
+          quantityPerCycle: qty, mediaSameForAll,
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           createdAt: new Date().toISOString(),
         });
       }
+
     } else if (distMode === "roundrobin") {
-      // Round-robin: distribui URLs sequencialmente entre as contas
-      // Cada URL → uma conta diferente em sequência
-      for (let u = 0; u < urls.length; u++) {
-        if (u > 0) {
-          const delayMs = randomBetween(
-            Math.round(intervalMin * 60000),
-            Math.max(Math.round(intervalMax * 60000), Math.round(intervalMin * 60000) + 1000)
-          );
-          ts += delayMs;
-        }
-        const acc = selectedAccounts[u % selectedAccounts.length];
+      for (let i = 0; i < selectedAccounts.length; i++) {
+        if (i > 0) ts += intervalMs();
+        // Round-robin: URLs sequenciais por conta
+        const mediaUrls = Array.from({ length: qty }, (_, q) => urls[(i * qty + q) % urls.length]);
         items.push({
-          id: `${Date.now()}-${u}-${Math.random().toString(36).slice(2)}`,
-          postType, mediaType, mediaUrl: urls[u],
-          caption, accounts: [acc],
+          id: `${Date.now()}-rr-${i}-${Math.random().toString(36).slice(2)}`,
+          postType, mediaType,
+          mediaUrl: mediaUrls[0],
+          mediaUrls,
+          caption, accounts: [selectedAccounts[i]],
           scheduledAt: ts, status: "pending",
           loop, runCount: 0, distMode: "roundrobin",
+          quantityPerCycle: qty, mediaSameForAll,
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           createdAt: new Date().toISOString(),
         });
@@ -327,15 +336,14 @@ export default function Schedule() {
     if (!validUrls.length)   return alert("Adicione ao menos uma URL de mídia");
     if (!selectedIds.length) return alert("Selecione ao menos uma conta");
     if (!startTime)          return alert("Defina o horário de início");
-
     const startTs = localToTimestamp(startTime);
     if (startTs <= Date.now()) return alert("O horário precisa ser no futuro");
-
     const items = buildQueueItems(startTs);
     await addBatch(items);
     setUrlList([{ id: 1, url: "", type: isReel ? "VIDEO" : mediaType }]);
     setCaption("");
     setSelectedIds([]);
+    setQuantityPerCycle(1);
   };
 
   const openEdit = (item) => {
@@ -349,8 +357,7 @@ export default function Schedule() {
 
   const saveEdit = async () => {
     if (!editModal) return;
-    const newTs = localToTimestamp(editTime);
-    await updateItem({ ...editModal, scheduledAt: newTs, caption: editCaption, status: "pending" });
+    await updateItem({ ...editModal, scheduledAt: localToTimestamp(editTime), caption: editCaption, status: "pending" });
     setEditModal(null);
   };
 
@@ -365,14 +372,27 @@ export default function Schedule() {
   const doneCount    = queue.filter((q) => q.status === "done").length;
   const errorCount   = queue.filter((q) => q.status === "error").length;
 
-  // Preview da distribuição
   const previewDist = () => {
     const urls = validUrls.map((x) => x.url.trim());
     if (!urls.length || !selectedAccounts.length) return [];
-    if (distMode === "all") return [`${urls.length} URL(s) → ${selectedAccounts.length} conta(s) cada`];
-    if (distMode === "random") return selectedAccounts.map((acc, i) => `@${acc.username} → URL sorteada aleatoriamente`);
-    if (distMode === "roundrobin") return urls.map((url, i) => `URL ${i+1} → @${selectedAccounts[i % selectedAccounts.length]?.username}`);
+    const qty = Math.max(1, quantityPerCycle);
+    const mLabel = qty > 1 ? `${qty} mídias` : "1 mídia";
+    if (distMode === "all") return [`${mLabel} → ${selectedAccounts.length} conta(s) (${mediaSameForAll === "same" ? "mesmas mídias" : "distribuídas"})`];
+    if (distMode === "random") return selectedAccounts.slice(0, 6).map((acc) => `@${acc.username} → ${mLabel} aleatórias`);
+    if (distMode === "roundrobin") return selectedAccounts.slice(0, 6).map((acc, i) => {
+      const start = (i * qty) % Math.max(urls.length, 1);
+      return `@${acc.username} → URL ${start + 1}${qty > 1 ? `..${start + qty}` : ""}`;
+    });
     return [];
+  };
+
+  const estimatedTotal = () => Math.max(1, quantityPerCycle) * (distMode === "all" ? selectedIds.length : selectedIds.length);
+
+  const scheduleLabel = () => {
+    const qty = Math.max(1, quantityPerCycle);
+    if (distMode === "all") return `🗓 Agendar — ${qty} mídia(s) × ${selectedIds.length} conta(s)`;
+    if (distMode === "random") return `🗓 Agendar — ${qty} mídia(s) aleatórias × ${selectedIds.length} conta(s)`;
+    return `🗓 Agendar — round-robin × ${selectedIds.length} conta(s)`;
   };
 
   return (
@@ -386,15 +406,11 @@ export default function Schedule() {
           </div>
         </div>
         {queue.length > 0 && (
-          <button className="btn btn-danger btn-sm" onClick={() => setConfirmModal({ type: "clearQueue" })}>
-            Limpar fila
-          </button>
+          <button className="btn btn-danger btn-sm" onClick={() => setConfirmModal({ type: "clearQueue" })}>Limpar fila</button>
         )}
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }} className="schedule-grid">
-
-        {/* ── Formulário ── */}
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
 
           {/* Tipo de post */}
@@ -422,64 +438,46 @@ export default function Schedule() {
             )}
           </div>
 
-          {/* Upload Catbox + URLs */}
+          {/* Mídias */}
           <div className="card">
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
               <div style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>
                 Mídias ({validUrls.length})
               </div>
               <div style={{ display: "flex", gap: 6 }}>
-                <button
-                  className={`btn btn-sm ${showUploader ? "btn-primary" : "btn-ghost"}`}
-                  onClick={() => setShowUploader((p) => !p)}
-                >
+                <button className={`btn btn-sm ${showUploader ? "btn-primary" : "btn-ghost"}`} onClick={() => setShowUploader((p) => !p)}>
                   ☁️ Upload mídias
                 </button>
                 <button className="btn btn-ghost btn-xs" onClick={addUrl}>+ URL manual</button>
               </div>
             </div>
-
-            {/* Uploader Catbox */}
             {showUploader && (
               <div style={{ marginBottom: 14, padding: "14px", background: "var(--bg3)", borderRadius: 10, border: "1px solid var(--border)" }}>
-                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 10, color: "var(--accent-light)" }}>
-                  ☁️ Upload direto para Catbox — URLs geradas automaticamente
-                </div>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 10, color: "var(--accent-light)" }}>☁️ Upload direto para Catbox</div>
                 <CatboxUploader onUrlsReady={handleCatboxUrls} mediaType={mediaType} />
               </div>
             )}
-
-            {/* Lista de URLs */}
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {urlList.map((item, idx) => (
-                <div key={item.id}>
-                  <div style={{ display: "flex", gap: 7, alignItems: "center" }}>
-                    <span style={{ fontSize: 11, color: "var(--muted)", minWidth: 20, textAlign: "right", fontWeight: 600 }}>{idx + 1}.</span>
-                    <span style={{ fontSize: 14, flexShrink: 0 }}>{item.type === "VIDEO" ? "🎬" : "🖼"}</span>
-                    <input
-                      type="url"
-                      placeholder="https://files.catbox.moe/..."
-                      value={item.url}
-                      onChange={(e) => setUrl(item.id, e.target.value)}
-                      onFocus={() => setPreviewIdx(idx)}
-                      style={{ flex: 1, fontSize: 12, padding: "8px 10px" }}
-                    />
-                    {urlList.length > 1 && (
-                      <button className="btn btn-ghost btn-xs" onClick={() => removeUrl(item.id)} style={{ color: "var(--danger)", flexShrink: 0 }}>✕</button>
-                    )}
-                  </div>
+                <div key={item.id} style={{ display: "flex", gap: 7, alignItems: "center" }}>
+                  <span style={{ fontSize: 11, color: "var(--muted)", minWidth: 20, textAlign: "right", fontWeight: 600 }}>{idx + 1}.</span>
+                  <span style={{ fontSize: 14, flexShrink: 0 }}>{item.type === "VIDEO" ? "🎬" : "🖼"}</span>
+                  <input
+                    type="url" placeholder="https://files.catbox.moe/..."
+                    value={item.url} onChange={(e) => setUrl(item.id, e.target.value)} onFocus={() => setPreviewIdx(idx)}
+                    style={{ flex: 1, fontSize: 12, padding: "8px 10px" }}
+                  />
+                  {urlList.length > 1 && (
+                    <button className="btn btn-ghost btn-xs" onClick={() => removeUrl(item.id)} style={{ color: "var(--danger)", flexShrink: 0 }}>✕</button>
+                  )}
                 </div>
               ))}
             </div>
-
-            {/* Preview da URL ativa */}
             {activeUrl && (
               <div style={{ marginTop: 12 }}>
                 <MediaPreview url={activeUrl} mediaType={isReel ? "VIDEO" : mediaType} onTypeDetected={!isReel ? setMediaType : undefined} />
               </div>
             )}
-
-            {/* Tipo de mídia (desativado para Reel) */}
             {!isReel && (
               <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
                 {["IMAGE", "VIDEO"].map((t) => (
@@ -497,26 +495,130 @@ export default function Schedule() {
             )}
           </div>
 
-          {/* Modo de distribuição */}
+          {/* ── NOVO: Quantidade por Ciclo ── */}
+          <div className="card" style={{ position: "relative", overflow: "hidden" }}>
+            <div style={{
+              position: "absolute", top: 0, left: 0, right: 0, height: 2,
+              background: "linear-gradient(90deg, var(--accent), #9b4dfc, var(--accent))",
+              opacity: 0.7,
+            }} />
+
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>
+                🎯 Quantidade de mídias por ciclo
+              </div>
+              <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                Quantas mídias cada conta recebe por execução do agendamento
+              </div>
+            </div>
+
+            {/* Controle stepper */}
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+              <button onClick={() => setQuantityPerCycle(q => Math.max(1, q - 1))} style={{
+                width: 34, height: 34, borderRadius: 8, border: "1px solid var(--border)",
+                background: "var(--bg3)", color: "var(--text)", fontSize: 20, fontWeight: 700,
+                display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0,
+              }}>−</button>
+
+              <div style={{ flex: 1, textAlign: "center" }}>
+                <div style={{ fontSize: 38, fontWeight: 800, color: "var(--accent-light)", lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
+                  {quantityPerCycle}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+                  {quantityPerCycle === 1 ? "mídia por conta por ciclo" : "mídias por conta por ciclo"}
+                </div>
+              </div>
+
+              <button onClick={() => setQuantityPerCycle(q => Math.min(20, q + 1))} style={{
+                width: 34, height: 34, borderRadius: 8, border: "1px solid var(--accent)",
+                background: "#7c5cfc18", color: "var(--accent-light)", fontSize: 20, fontWeight: 700,
+                display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0,
+              }}>+</button>
+
+              <input type="number" min="1" max="20" value={quantityPerCycle}
+                onChange={(e) => setQuantityPerCycle(Math.min(20, Math.max(1, parseInt(e.target.value) || 1)))}
+                style={{ width: 56, fontSize: 13, textAlign: "center", padding: "6px 8px" }}
+              />
+            </div>
+
+            {/* Presets rápidos */}
+            <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+              {[1, 2, 3, 5, 10].map((n) => (
+                <button key={n} onClick={() => setQuantityPerCycle(n)} style={{
+                  padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                  border: `1px solid ${quantityPerCycle === n ? "var(--accent)" : "var(--border)"}`,
+                  background: quantityPerCycle === n ? "#7c5cfc22" : "var(--bg3)",
+                  color: quantityPerCycle === n ? "var(--accent-light)" : "var(--muted)",
+                  transition: "all 0.12s",
+                }}>{n}×</button>
+              ))}
+            </div>
+
+            {/* Seleção de mídias */}
+            <div style={{ marginBottom: 8, fontSize: 12, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Seleção de mídias
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {[
+                { value: "same",       icon: "📋", label: "Mesmas mídias para todas",   desc: "Todas as contas recebem as mesmas mídias (pool em loop se necessário)" },
+                { value: "distribute", icon: "🎲", label: "Distribuir aleatoriamente",  desc: "Cada conta recebe mídias diferentes sorteadas do pool" },
+              ].map((opt) => (
+                <button key={opt.value} onClick={() => setMediaSameForAll(opt.value)} style={{
+                  display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", borderRadius: 8, border: "1px solid",
+                  borderColor: mediaSameForAll === opt.value ? "var(--accent)" : "var(--border)",
+                  background: mediaSameForAll === opt.value ? "#7c5cfc12" : "var(--bg3)",
+                  textAlign: "left", width: "100%", transition: "all 0.12s", cursor: "pointer",
+                }}>
+                  <span style={{ fontSize: 18, flexShrink: 0 }}>{opt.icon}</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: mediaSameForAll === opt.value ? "var(--accent-light)" : "var(--text)" }}>{opt.label}</div>
+                    <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{opt.desc}</div>
+                  </div>
+                  <div style={{ width: 15, height: 15, borderRadius: "50%", border: `1.5px solid ${mediaSameForAll === opt.value ? "var(--accent)" : "var(--border)"}`, background: mediaSameForAll === opt.value ? "var(--accent)" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 2 }}>
+                    {mediaSameForAll === opt.value && <span style={{ color: "#fff", fontSize: 9 }}>✓</span>}
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {/* Info box explicativo */}
+            {quantityPerCycle > 1 && (
+              <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 8, background: "rgba(124,92,252,0.08)", border: "1px solid rgba(124,92,252,0.2)" }}>
+                <div style={{ fontSize: 11, color: "var(--accent-light)", fontWeight: 600, marginBottom: 4 }}>💡 Como vai funcionar:</div>
+                <div style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.6 }}>
+                  {distMode === "all" && `Todas as ${selectedIds.length || "N"} conta(s) receberão ${quantityPerCycle} mídias por ciclo.`}
+                  {distMode === "random" && `Cada conta receberá ${quantityPerCycle} mídias sorteadas do pool de ${validUrls.length || "N"} URL(s).`}
+                  {distMode === "roundrobin" && `Cada conta recebe ${quantityPerCycle} URL(s) sequenciais do pool (round-robin).`}
+                  {" Intervalo de 3s entre cada mídia do mesmo lote."}
+                  {loop && " Repetição diária ativa."}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Distribuição */}
           <div className="card">
             <div style={{ marginBottom: 12, fontSize: 12, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>
               🎲 Distribuição entre contas
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {[
-                { value: "all",        icon: "📢", label: "Todas recebem tudo",    desc: "Cada URL é postada em todas as contas selecionadas" },
-                { value: "random",     icon: "🎲", label: "Aleatório",             desc: "Cada conta recebe uma URL sorteada aleatoriamente do pool" },
-                { value: "roundrobin", icon: "🔄", label: "Round-robin",           desc: "Distribui URLs em sequência entre as contas" },
+                { value: "all",        icon: "📢", label: "Todas recebem tudo",    desc: `${quantityPerCycle > 1 ? `${quantityPerCycle} mídias` : "Cada URL"} postada(s) em todas as contas` },
+                { value: "random",     icon: "🎲", label: "Aleatório",             desc: `Cada conta recebe ${quantityPerCycle > 1 ? `${quantityPerCycle} mídias` : "uma mídia"} sorteada(s) do pool` },
+                { value: "roundrobin", icon: "🔄", label: "Round-robin",           desc: `Distribui ${quantityPerCycle > 1 ? `${quantityPerCycle} URLs` : "URLs"} em sequência entre as contas` },
               ].map((opt) => (
                 <button key={opt.value} onClick={() => setDistMode(opt.value)} style={{
                   display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", borderRadius: 8, border: "1px solid",
                   borderColor: distMode === opt.value ? "var(--accent)" : "var(--border)",
                   background: distMode === opt.value ? "#7c5cfc12" : "var(--bg3)",
-                  textAlign: "left", width: "100%", transition: "all 0.12s",
+                  textAlign: "left", width: "100%", transition: "all 0.12s", cursor: "pointer",
                 }}>
                   <span style={{ fontSize: 18, flexShrink: 0 }}>{opt.icon}</span>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: distMode === opt.value ? "var(--accent-light)" : "var(--text)" }}>{opt.label}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: distMode === opt.value ? "var(--accent-light)" : "var(--text)" }}>{opt.label}</span>
+                      {distMode === opt.value && <CycleBadge count={quantityPerCycle} />}
+                    </div>
                     <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{opt.desc}</div>
                   </div>
                   <div style={{ width: 15, height: 15, borderRadius: "50%", border: `1.5px solid ${distMode === opt.value ? "var(--accent)" : "var(--border)"}`, background: distMode === opt.value ? "var(--accent)" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 2 }}>
@@ -526,15 +628,17 @@ export default function Schedule() {
               ))}
             </div>
 
-            {/* Preview da distribuição */}
             {validUrls.length > 0 && selectedAccounts.length > 0 && (
               <div style={{ marginTop: 12, background: "var(--bg3)", borderRadius: 8, padding: "10px 12px" }}>
                 <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, marginBottom: 6 }}>PRÉVIA</div>
                 {previewDist().slice(0, 5).map((line, i) => (
                   <div key={i} style={{ fontSize: 11, color: "var(--text)", marginBottom: 3 }}>→ {line}</div>
                 ))}
-                {previewDist().length > 5 && (
-                  <div style={{ fontSize: 11, color: "var(--muted)" }}>... e mais {previewDist().length - 5}</div>
+                {previewDist().length > 5 && <div style={{ fontSize: 11, color: "var(--muted)" }}>... e mais {previewDist().length - 5}</div>}
+                {selectedIds.length > 0 && (
+                  <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border)", fontSize: 11, color: "var(--accent-light)", fontWeight: 600 }}>
+                    📊 Total estimado: {estimatedTotal()} post(s) por ciclo{loop && " · repete diariamente"}
+                  </div>
                 )}
               </div>
             )}
@@ -545,50 +649,36 @@ export default function Schedule() {
             <div className="card">
               <div className="form-row" style={{ marginBottom: 0 }}>
                 <label>Legenda</label>
-                <textarea
-                  placeholder="Escreva a legenda... #hashtags"
-                  value={caption}
-                  onChange={(e) => setCaption(e.target.value)}
-                  style={{ minHeight: 80, fontSize: 13 }}
-                  maxLength={2200}
-                />
+                <textarea placeholder="Escreva a legenda... #hashtags" value={caption} onChange={(e) => setCaption(e.target.value)} style={{ minHeight: 80, fontSize: 13 }} maxLength={2200} />
               </div>
             </div>
           )}
 
-          {/* Horário e intervalo */}
+          {/* Horário */}
           <div className="card">
             <div className="form-row">
               <label>Início do agendamento</label>
               <input type="datetime-local" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
-              <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
-                Fuso: {Intl.DateTimeFormat().resolvedOptions().timeZone}
-              </div>
+              <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>Fuso: {Intl.DateTimeFormat().resolvedOptions().timeZone}</div>
             </div>
-
             <div className="form-row" style={{ marginBottom: 0 }}>
-              <label>Intervalo entre posts (minutos)</label>
+              <label>Intervalo entre contas (minutos)</label>
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                <input
-                  type="number" min="0" max="1440" step="1" value={intervalMin}
+                <input type="number" min="0" max="1440" step="1" value={intervalMin}
                   onChange={(e) => setIntervalMin(Math.max(0, parseFloat(e.target.value) || 0))}
-                  style={{ maxWidth: 90, fontSize: 13 }}
-                />
+                  style={{ maxWidth: 90, fontSize: 13 }} />
                 <span style={{ color: "var(--muted)", fontSize: 12 }}>até</span>
-                <input
-                  type="number" min="0" max="1440" step="1" value={intervalMax}
+                <input type="number" min="0" max="1440" step="1" value={intervalMax}
                   onChange={(e) => setIntervalMax(Math.max(0, parseFloat(e.target.value) || 0))}
-                  style={{ maxWidth: 90, fontSize: 13 }}
-                />
+                  style={{ maxWidth: 90, fontSize: 13 }} />
                 <span style={{ fontSize: 11, color: "var(--muted)" }}>min</span>
               </div>
               <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 6, padding: "6px 10px", background: "var(--bg3)", borderRadius: 7 }}>
                 {intervalMin === 0 && intervalMax === 0
-                  ? "Sem intervalo — publica tudo em sequência imediata"
-                  : `Intervalo aleatório de ${intervalMin}~${intervalMax} min + segundos aleatórios`}
+                  ? `Sem intervalo entre contas${quantityPerCycle > 1 ? " · 3s entre mídias do mesmo ciclo" : ""}`
+                  : `Intervalo de ${intervalMin}~${intervalMax} min entre contas${quantityPerCycle > 1 ? ` · 3s entre mídias do mesmo ciclo` : ""}`}
               </div>
             </div>
-
             <div style={{ marginTop: 14 }}>
               <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
                 <input type="checkbox" checked={loop} onChange={(e) => setLoop(e.target.checked)} style={{ width: "auto" }} />
@@ -596,31 +686,22 @@ export default function Schedule() {
                   🔁 Repetir diariamente (loop 24h)
                 </span>
               </label>
+              {loop && quantityPerCycle > 1 && (
+                <div style={{ marginTop: 6, fontSize: 11, color: "var(--muted)", padding: "6px 10px", background: "rgba(124,92,252,0.06)", borderRadius: 7 }}>
+                  A cada 24h: {quantityPerCycle} mídia(s) por conta, modo {distMode}.
+                </div>
+              )}
             </div>
           </div>
 
           {/* Contas */}
           <div className="card">
-            <AccountPicker
-              accounts={accounts}
-              selectedIds={selectedIds}
-              onToggle={toggleAcc}
-              onSelectAll={selectAll}
-              onClear={clearAll}
-            />
+            <AccountPicker accounts={accounts} selectedIds={selectedIds} onToggle={toggleAcc} onSelectAll={selectAll} onClear={clearAll} />
           </div>
 
-          <button
-            className="btn btn-primary"
-            onClick={schedule}
-            disabled={!validUrls.length || !selectedIds.length}
-            style={{ padding: "12px 24px", fontSize: 14 }}
-          >
-            🗓 Agendar {distMode === "all"
-              ? `${validUrls.length} post(s) em ${selectedIds.length} conta(s)`
-              : distMode === "random"
-              ? `${selectedIds.length} post(s) aleatórios`
-              : `${validUrls.length} post(s) round-robin`}
+          <button className="btn btn-primary" onClick={schedule} disabled={!validUrls.length || !selectedIds.length}
+            style={{ padding: "12px 24px", fontSize: 14 }}>
+            {scheduleLabel()}
           </button>
         </div>
 
@@ -643,50 +724,47 @@ export default function Schedule() {
                 const info = STATUS_INFO[item.status] || STATUS_INFO.pending;
                 const scheduledDate = new Date(item.scheduledAt);
                 const isPast = item.scheduledAt < Date.now();
-                // Thumbnail da URL (só imagens)
                 const thumbUrl = item.mediaType === "IMAGE" ? item.mediaUrl : null;
+                const qty = item.quantityPerCycle || 1;
+                const mediaCount = item.mediaUrls?.length || 1;
 
                 return (
-                  <div key={item.id} style={{
-                    background: info.bg,
-                    border: `1px solid ${info.color}28`,
-                    borderLeft: `3px solid ${info.color}`,
-                    borderRadius: 10,
-                    padding: "9px 11px",
-                  }}>
-                    {/* Linha principal — tudo em uma linha */}
+                  <div key={item.id} style={{ background: info.bg, border: `1px solid ${info.color}28`, borderLeft: `3px solid ${info.color}`, borderRadius: 10, padding: "9px 11px" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-
-                      {/* Thumbnail */}
                       {thumbUrl ? (
                         <img src={thumbUrl} alt="" style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover", flexShrink: 0, border: "1px solid var(--border)" }}
                           onError={(e) => { e.target.style.display = "none"; }} />
                       ) : (
-                        <div style={{ width: 36, height: 36, borderRadius: 6, background: "var(--bg3)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>
+                        <div style={{ width: 36, height: 36, borderRadius: 6, background: "var(--bg3)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, position: "relative" }}>
                           🎬
+                          {mediaCount > 1 && (
+                            <span style={{ position: "absolute", top: -4, right: -4, background: "var(--accent)", color: "#fff", fontSize: 8, fontWeight: 700, borderRadius: 8, padding: "1px 4px", lineHeight: 1.2 }}>
+                              ×{mediaCount}
+                            </span>
+                          )}
                         </div>
                       )}
 
-                      {/* Info central */}
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        {/* Linha 1: status + tipo + horário */}
                         <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 3, flexWrap: "wrap" }}>
-                          <span style={{ fontSize: 10, fontWeight: 700, color: info.color }}>
-                            {item.status === "running" ? "⟳ " : ""}{info.label.toUpperCase()}
-                          </span>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: info.color }}>{item.status === "running" ? "⟳ " : ""}{info.label.toUpperCase()}</span>
                           <span style={{ fontSize: 10, color: "var(--muted)", background: "var(--bg3)", padding: "1px 6px", borderRadius: 4 }}>{item.postType}</span>
                           <span style={{ fontSize: 10, color: "var(--muted)" }}>{item.mediaType === "IMAGE" ? "🖼" : "🎬"}</span>
+                          {qty > 1 && (
+                            <span style={{ fontSize: 9, fontWeight: 700, color: "var(--accent-light)", background: "#7c5cfc20", border: "1px solid var(--accent)", padding: "0 5px", borderRadius: 8 }}>
+                              ×{qty}/ciclo
+                            </span>
+                          )}
                           {item.loop && <span style={{ fontSize: 9, color: "var(--accent-light)" }}>🔁</span>}
-                          {item.runCount > 0 && <span style={{ fontSize: 9, color: "var(--muted)" }}>×{item.runCount}</span>}
+                          {item.runCount > 0 && <span style={{ fontSize: 9, color: "var(--muted)" }}>run×{item.runCount}</span>}
                           <span style={{ fontSize: 10, color: isPast && item.status === "pending" ? "var(--warning)" : "var(--muted)", marginLeft: "auto" }}>
                             🕐 {scheduledDate.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
                             {isPast && item.status === "pending" && " ⚠"}
                           </span>
                         </div>
 
-                        {/* Linha 2: avatars das contas + URL truncada */}
                         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                          <div style={{ display: "flex", gap: -2 }}>
+                          <div style={{ display: "flex" }}>
                             {(item.accounts || []).slice(0, 5).map((a, i) => (
                               <div key={a.id} title={`@${a.username}`} style={{ marginLeft: i > 0 ? -6 : 0, zIndex: 5 - i, position: "relative" }}>
                                 {a.profile_picture
@@ -696,23 +774,16 @@ export default function Schedule() {
                                     </div>}
                               </div>
                             ))}
-                            {(item.accounts || []).length > 5 && (
-                              <span style={{ fontSize: 9, color: "var(--muted)", marginLeft: 4 }}>+{item.accounts.length - 5}</span>
-                            )}
+                            {(item.accounts || []).length > 5 && <span style={{ fontSize: 9, color: "var(--muted)", marginLeft: 4 }}>+{item.accounts.length - 5}</span>}
                           </div>
                           <span style={{ fontSize: 10, color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-                            {item.mediaUrl?.split("/").pop()}
+                            {mediaCount > 1 ? `${mediaCount} mídias agrupadas` : item.mediaUrl?.split("/").pop()}
                           </span>
                         </div>
 
-                        {item.error && (
-                          <div style={{ fontSize: 10, color: "var(--danger)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                            ✗ {item.error}
-                          </div>
-                        )}
+                        {item.error && <div style={{ fontSize: 10, color: "var(--danger)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>✗ {item.error}</div>}
                       </div>
 
-                      {/* Ações */}
                       <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
                         {(item.status === "pending" || item.status === "error") && (
                           <button className="btn btn-ghost btn-xs" onClick={() => openEdit(item)} title="Editar" style={{ padding: "3px 7px", fontSize: 12 }}>✎</button>
@@ -729,7 +800,7 @@ export default function Schedule() {
         </div>
       </div>
 
-      {/* Modal de edição */}
+      {/* Modal edição */}
       {editModal && (
         <div onClick={() => setEditModal(null)} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--bg2)", border: "1px solid var(--border2)", borderRadius: 16, padding: 28, width: "100%", maxWidth: 440, boxShadow: "0 24px 80px rgba(0,0,0,0.5)" }}>
@@ -750,29 +821,13 @@ export default function Schedule() {
         </div>
       )}
 
-      <Modal
-        open={confirmModal?.type === "clearQueue"}
-        title="Limpar fila?"
-        message="Todos os agendamentos pendentes serão removidos."
-        confirmLabel="Limpar fila"
-        confirmDanger
-        onConfirm={() => { clearQueue(); setConfirmModal(null); }}
-        onCancel={() => setConfirmModal(null)}
-      />
-      <Modal
-        open={confirmModal?.type === "removeItem"}
-        title="Remover agendamento?"
-        message="Este item será removido da fila."
-        confirmLabel="Remover"
-        confirmDanger
-        onConfirm={() => { removeItem(confirmModal.id); setConfirmModal(null); }}
-        onCancel={() => setConfirmModal(null)}
-      />
+      <Modal open={confirmModal?.type === "clearQueue"} title="Limpar fila?" message="Todos os agendamentos pendentes serão removidos." confirmLabel="Limpar fila" confirmDanger
+        onConfirm={() => { clearQueue(); setConfirmModal(null); }} onCancel={() => setConfirmModal(null)} />
+      <Modal open={confirmModal?.type === "removeItem"} title="Remover agendamento?" message="Este item será removido da fila." confirmLabel="Remover" confirmDanger
+        onConfirm={() => { removeItem(confirmModal.id); setConfirmModal(null); }} onCancel={() => setConfirmModal(null)} />
 
       <style>{`
-        @media (max-width: 900px) {
-          .schedule-grid { grid-template-columns: 1fr !important; }
-        }
+        @media (max-width: 900px) { .schedule-grid { grid-template-columns: 1fr !important; } }
       `}</style>
     </div>
   );
