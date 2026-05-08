@@ -75,36 +75,40 @@ function isNewAccount(acc) {
   return warmupDay(acc.connected_at || new Date().toISOString()) <= NEW_ACCOUNT_DAYS;
 }
 
-function readAsBase64(file, onProgress) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onprogress = (e) => {
-      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 45) + 5);
-    };
-    reader.onload  = () => resolve(reader.result.split(",")[1]);
-    reader.onerror = () => reject(new Error("Falha ao ler arquivo"));
-    reader.readAsDataURL(file);
-  });
-}
-
+// Upload direto do browser para R2 via presigned URL — sem limite de tamanho
 async function uploadFile(file, onProgress) {
-  onProgress(5);
-  const fileBase64 = await readAsBase64(file, onProgress);
-  onProgress(55);
-  const res = await fetch("/api/catbox-proxy", {
+  onProgress(2);
+
+  // Passo 1: obter presigned URL da Netlify Function (só metadados)
+  const presignRes = await fetch("/api/r2-presign", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      fileBase64,
-      fileName: file.name,
-      mimeType: file.type || "video/mp4",
-    }),
+    body: JSON.stringify({ fileName: file.name, mimeType: file.type || "video/mp4" }),
   });
-  onProgress(90);
-  const data = await res.json();
-  if (!res.ok || !data.url) throw new Error(data.error || `Erro ${res.status}`);
+  if (!presignRes.ok) {
+    const err = await presignRes.json().catch(() => ({}));
+    throw new Error(err.error || `Erro ao gerar URL (${presignRes.status})`);
+  }
+  const { presignedUrl, publicUrl } = await presignRes.json();
+  onProgress(5);
+
+  // Passo 2: PUT direto no R2 com progresso real via XHR
+  await new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 93) + 5);
+    };
+    xhr.onload    = () => xhr.status === 200 ? resolve() : reject(new Error(`R2 HTTP ${xhr.status}`));
+    xhr.onerror   = () => reject(new Error("Erro de rede durante o upload"));
+    xhr.ontimeout = () => reject(new Error("Timeout no upload"));
+    xhr.timeout   = 5 * 60 * 1000;
+    xhr.open("PUT", presignedUrl);
+    xhr.setRequestHeader("Content-Type", file.type || "video/mp4");
+    xhr.send(file);
+  });
+
   onProgress(100);
-  return data.url;
+  return publicUrl;
 }
 
 function addJitter(date, minRange, secRange) {
