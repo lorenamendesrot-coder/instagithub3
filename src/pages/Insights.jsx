@@ -81,7 +81,7 @@ function ReelCard({ reel }) {
           )}
 
           {/* Métricas em linha */}
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div className="metrics-row" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <MetricBox icon="▶️" label="Plays"       value={ins.plays}      highlight />
             <MetricBox icon="👁️" label="Alcance"     value={ins.reach}               />
             <MetricBox icon="❤️" label="Curtidas"    value={ins.likes}               />
@@ -295,25 +295,26 @@ export default function Insights() {
       </div>
 
       {/* Filtros */}
-      <div className="card card-sm" style={{ marginBottom: 20, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
+      <div className="card card-sm" style={{ marginBottom: 20 }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
         {/* Data */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <label style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }}>📅 Data:</label>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "1 1 auto", minWidth: 0 }}>
+          <label style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap", margin: 0 }}>📅</label>
           <input
             type="date"
             value={inputDate}
             max={todayStr}
             onChange={(e) => setInputDate(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && applyDate()}
-            style={{ padding: "6px 10px", fontSize: 13, borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg3)", color: "var(--text)" }}
+            style={{ padding: "6px 10px", fontSize: 13, borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg3)", color: "var(--text)", flex: 1, minWidth: 0 }}
           />
-          <button className="btn btn-primary btn-sm" onClick={applyDate} style={{ fontSize: 12 }}>
+          <button className="btn btn-primary btn-sm" onClick={applyDate} style={{ fontSize: 12, whiteSpace: "nowrap" }}>
             Buscar
           </button>
         </div>
 
         {/* Atalhos de data */}
-        <div style={{ display: "flex", gap: 6 }}>
+        <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
           {[
             { label: "Hoje",     offset: 0  },
             { label: "Ontem",    offset: -1 },
@@ -333,12 +334,12 @@ export default function Insights() {
 
         {/* Filtro de conta */}
         {activeAccounts.length > 1 && (
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <label style={{ fontSize: 12, color: "var(--muted)" }}>👤 Conta:</label>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flex: "1 1 auto" }}>
+            <label style={{ fontSize: 12, color: "var(--muted)", margin: 0 }}>👤</label>
             <select
               value={selectedAccounts}
               onChange={(e) => setSelectedAccounts(e.target.value)}
-              style={{ padding: "6px 10px", fontSize: 12, borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg3)", color: "var(--text)" }}
+              style={{ padding: "6px 10px", fontSize: 12, borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg3)", color: "var(--text)", flex: 1 }}
             >
               <option value="ALL">Todas ({activeAccounts.length})</option>
               {activeAccounts.map((a) => (
@@ -347,6 +348,7 @@ export default function Insights() {
             </select>
           </div>
         )}
+        </div>
       </div>
 
       {/* Resultados por conta */}

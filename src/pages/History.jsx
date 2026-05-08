@@ -53,30 +53,31 @@ export default function History() {
 
       {/* Filtros */}
       {history.length > 0 && (
-        <div className="card card-sm" style={{ marginBottom: 16, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <div className="card card-sm" style={{ marginBottom: 16 }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           {/* Busca */}
           <input
             placeholder="Buscar legenda ou @conta..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            style={{ maxWidth: 220, padding: "7px 11px", fontSize: 12 }}
+            style={{ flex: "1 1 160px", minWidth: 0, padding: "7px 11px", fontSize: 12 }}
           />
           {/* Tipo */}
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
             {["ALL", "FEED", "REEL", "STORY"].map((t) => (
               <button key={t} onClick={() => setFilterType(t)}
                 className={`btn btn-sm ${filterType === t ? "btn-primary" : "btn-ghost"}`}
-                style={{ fontSize: 11, padding: "5px 11px" }}>
+                style={{ fontSize: 11, padding: "5px 10px" }}>
                 {t === "ALL" ? "Todos" : `${TYPE_ICON[t]} ${TYPE_LABEL[t]}`}
               </button>
             ))}
           </div>
           {/* Status */}
-          <div style={{ display: "flex", gap: 6 }}>
+          <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
             {[["ALL", "Todos"], ["success", "✓ OK"], ["fail", "✗ Falhou"]].map(([v, l]) => (
               <button key={v} onClick={() => setFilterStatus(v)}
                 className={`btn btn-sm ${filterStatus === v ? "btn-primary" : "btn-ghost"}`}
-                style={{ fontSize: 11, padding: "5px 11px" }}>
+                style={{ fontSize: 11, padding: "5px 10px" }}>
                 {l}
               </button>
             ))}
@@ -87,6 +88,7 @@ export default function History() {
               ✕ Limpar filtros
             </button>
           )}
+          </div>
         </div>
       )}
 

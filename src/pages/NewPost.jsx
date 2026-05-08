@@ -164,7 +164,7 @@ export default function NewPost() {
       )}
 
       {!progress && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 20, alignItems: "start" }} className="new-post-grid">
+        <div className="new-post-grid">
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
             {/* Tipo */}

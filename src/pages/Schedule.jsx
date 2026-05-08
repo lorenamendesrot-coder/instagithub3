@@ -410,7 +410,7 @@ export default function Schedule() {
         )}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }} className="schedule-grid">
+      <div className="schedule-grid">
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
 
           {/* Tipo de post */}

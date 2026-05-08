@@ -634,7 +634,7 @@ function AccountDetailModal({ acc, insights, loadingInsights, onClose, onEdit, o
             </div>
           ) : insights ? (
             <>
-              <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+              <div className="stat-row" style={{ display: "flex", gap: 6, marginBottom: 10 }}>
                 <StatBox label="Seguidores"  value={fmt(insights.followers_count)} icon="👥" />
                 <StatBox label="Seguindo"    value={fmt(insights.follows_count)}   icon="➡️" />
                 <StatBox label="Posts"       value={fmt(insights.media_count)}      icon="📸" />
