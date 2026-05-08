@@ -20,6 +20,7 @@ import { useOAuthUrl }     from "./useOAuthUrl.js";
 import { dbGetAll, dbPut, dbClear } from "./useDB.js";
 import Sidebar from "./Sidebar.jsx";
 import Toast   from "./Toast.jsx";
+import MobileBottomNav from "./MobileBottomNav.jsx";
 
 export { useAccounts };
 
@@ -49,10 +50,10 @@ export default function App() {
   const { toast, showToast }   = useToast();
   const { swStatus }           = useServiceWorker();
   const { oauthUrl }           = useOAuthUrl();
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false); // mantido para compatibilidade
   const location = useLocation();
 
-  // Fechar menu mobile ao navegar
+  // Fechar menu mobile ao navegar (mantido para compatibilidade)
   useEffect(() => { setMobileMenuOpen(false); }, [location.pathname]);
 
   // ✅ Alerta proativo de token expirado
@@ -110,34 +111,19 @@ export default function App() {
             display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15,
           }}>📱</div>
           <span style={{ fontWeight: 700, fontSize: 14 }}>Insta Manager</span>
+          {syncing && <span style={{ color: "var(--accent-light)", animation: "spin 1s linear infinite", display: "inline-block", fontSize: 14 }}>⟳</span>}
         </div>
-        <button
-          onClick={() => setMobileMenuOpen((p) => !p)}
-          style={{ background: "none", border: "none", color: "var(--text)", fontSize: 22, padding: 4 }}
-        >
-          {mobileMenuOpen ? "✕" : "☰"}
-        </button>
+        <a href={oauthUrl} style={{
+          fontSize: 12, fontWeight: 600, padding: "6px 12px", borderRadius: 8,
+          background: "linear-gradient(135deg, var(--accent), #9b4dfc)",
+          color: "#fff", textDecoration: "none",
+        }}>+ Conta</a>
       </div>
 
-      {/* ── Mobile Drawer ── */}
-      {mobileMenuOpen && (
-        <div style={{
-          position: "fixed", inset: 0, zIndex: 200,
-          background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)",
-        }} onClick={() => setMobileMenuOpen(false)}>
-          <aside
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: 260, height: "100%", background: "var(--bg2)",
-              borderRight: "1px solid var(--border)",
-              display: "flex", flexDirection: "column",
-              animation: "slideInLeft 0.2s ease",
-            }}
-          >
-            <Sidebar accounts={accounts} swStatus={swStatus} oauthUrl={oauthUrl} syncing={syncing} loading={accountsLoading} />
-          </aside>
-        </div>
-      )}
+      {/* ── Mobile Bottom Nav ── */}
+      <MobileBottomNav />
+
+      {/* ── Mobile Drawer (removido — substituído por bottom nav) ── */}
 
       {/* ── Main ── */}
       <main style={{ flex: 1, overflow: "auto", minWidth: 0, background: "var(--bg)" }}>
@@ -164,6 +150,7 @@ export default function App() {
       <style>{`
         @keyframes slideIn      { from { opacity: 0; transform: translateX(20px);  } to { opacity: 1; transform: translateX(0); } }
         @keyframes slideInLeft  { from { opacity: 0; transform: translateX(-100%); } to { opacity: 1; transform: translateX(0); } }
+        @keyframes spin         { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .sidebar-desktop { display: flex; }
         .mobile-header   { display: none; }
         @media (max-width: 768px) {
@@ -171,11 +158,11 @@ export default function App() {
           .mobile-header {
             display: flex; align-items: center; justify-content: space-between;
             position: fixed; top: 0; left: 0; right: 0; z-index: 100;
-            padding: 12px 16px;
+            padding: 10px 16px;
             background: var(--bg2); border-bottom: 1px solid var(--border);
-            height: 56px;
+            height: 52px;
           }
-          main { padding-top: 56px; }
+          main { padding-top: 52px; padding-bottom: 70px; }
         }
       `}</style>
     </div>
