@@ -955,65 +955,49 @@ export default function Accounts() {
     if (!acc.access_token) return;
     setLoadingIns((p) => ({ ...p, [acc.id]: true }));
     try {
-      let data = null;
-      try {
-        const res = await fetch("/api/account-insights", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ instagram_id: acc.id, access_token: acc.access_token }),
-        });
-        if (res.ok) {
-          const json = await res.json();
-          if (!json.error) data = json;
-        }
-        if (res.status === 401) {
-          await dbPut("sessions", { ...acc, token_status: "expired" });
-          reloadAccounts();
-        }
-      } catch { /* fallback abaixo */ }
+      // FIX: sempre usar /api/account-insights — nunca chamar graph.facebook.com direto
+      // Chamada direta ao Graph API pelo frontend dá erro 400/CORS com tokens de página
+      const res = await fetch("/api/account-insights", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instagram_id: acc.id, access_token: acc.access_token }),
+      });
 
-      if (!data) {
-        const GRAPH = "https://graph.facebook.com/v21.0";
-        const fields = "id,username,name,biography,website,profile_picture_url,account_type,followers_count,follows_count,media_count";
-        const res = await fetch(`${GRAPH}/${acc.id}?fields=${fields}&access_token=${acc.access_token}`);
-        const json = await res.json();
-        if (!json.error) {
-          data = {
-            id:               json.id,
-            username:         json.username,
-            name:             json.name,
-            biography:        json.biography || "",
-            website:          json.website || "",
-            profile_picture:  json.profile_picture_url || "",
-            account_type:     json.account_type,
-            followers_count:  json.followers_count ?? null,
-            follows_count:    json.follows_count ?? null,
-            media_count:      json.media_count ?? null,
-            account_status:   "active",
-            restriction_note: null,
-            fetched_at:       new Date().toISOString(),
-          };
-          // Persiste dados atualizados no IndexedDB
-          const updatedAcc = {
-            ...acc,
-            username:        json.username        || acc.username,
-            name:            json.name            || acc.name,
-            profile_picture: json.profile_picture_url || acc.profile_picture,
-            followers_count: json.followers_count ?? acc.followers_count,
-            follows_count:   json.follows_count   ?? acc.follows_count,
-            media_count:     json.media_count     ?? acc.media_count,
-            biography:       json.biography       || acc.biography || "",
-            website:         json.website         || acc.website   || "",
-          };
-          await dbPut("sessions", updatedAcc);
-          reloadAccounts();
-        } else if (json.error?.code === 190) {
-          await dbPut("sessions", { ...acc, token_status: "expired" });
-          reloadAccounts();
-        }
+      const json = await res.json();
+
+      if (res.status === 401 || json.error === "token_expired") {
+        await dbPut("sessions", { ...acc, token_status: "expired" });
+        reloadAccounts();
+        setInsights((p) => ({ ...p, [acc.id]: null }));
+        setLoadingIns((p) => ({ ...p, [acc.id]: false }));
+        return;
       }
 
-      setInsights((p) => ({ ...p, [acc.id]: data }));
+      if (res.ok && !json.error) {
+        // Persistir dados atualizados no IndexedDB e no Blobs
+        const updatedAcc = {
+          ...acc,
+          username:        json.username        || acc.username,
+          name:            json.name            || acc.name,
+          profile_picture: json.profile_picture || acc.profile_picture,
+          followers_count: json.followers_count ?? acc.followers_count,
+          follows_count:   json.follows_count   ?? acc.follows_count,
+          media_count:     json.media_count     ?? acc.media_count,
+          biography:       json.biography       || acc.biography || "",
+          website:         json.website         || acc.website   || "",
+        };
+        await dbPut("sessions", updatedAcc);
+        // Persistir também no Blobs para as próximas sessões
+        fetch("/api/accounts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify([updatedAcc]),
+        }).catch(() => {});
+        reloadAccounts();
+        setInsights((p) => ({ ...p, [acc.id]: json }));
+      } else {
+        setInsights((p) => ({ ...p, [acc.id]: null }));
+      }
     } catch {
       setInsights((p) => ({ ...p, [acc.id]: null }));
     }
