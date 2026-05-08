@@ -713,16 +713,10 @@ export default function Accounts() {
   useEffect(() => { insightsRef.current   = insights;   }, [insights]);
   useEffect(() => { loadingInsRef.current = loadingIns; }, [loadingIns]);
 
-  // ── fetchInsights ────────────────────────────────────────────────────────────
-  // Chama /api/account-insights e salva o resultado em insights[acc.id].
-  // O objeto retornado pelo backend já tem { health, insights_7d, insights_prev_7d, ... }
-  // Não transformamos nada — usamos direto como veio do servidor.
+  // ── fetchInsights (única conta) ──────────────────────────────────────────
   const fetchInsights = useCallback(async (acc, force = false) => {
     if (!force && (loadingInsRef.current[acc.id] || insightsRef.current[acc.id])) return;
     if (!acc.access_token) return;
-
-    setLoadingIns((p) => ({ ...p, [acc.id]: true }));
-
     try {
       const res  = await fetch("/api/account-insights", {
         method: "POST",
@@ -730,18 +724,12 @@ export default function Accounts() {
         body: JSON.stringify({ instagram_id: acc.id, access_token: acc.access_token }),
       });
       const json = await res.json();
-
-      // Token expirado
       if (res.status === 401 || json.error === "token_expired") {
         await dbPut("sessions", { ...acc, token_status: "expired" });
         reloadAccounts();
-        setInsights((p) => ({ ...p, [acc.id]: null }));
-        setLoadingIns((p) => ({ ...p, [acc.id]: false }));
-        return;
+        return null;
       }
-
       if (res.ok && !json.error) {
-        // Persistir dados atualizados no IndexedDB
         const updatedAcc = {
           ...acc,
           username:        json.username        || acc.username,
@@ -754,49 +742,49 @@ export default function Accounts() {
           website:         json.website         || acc.website   || "",
         };
         await dbPut("sessions", updatedAcc);
-        reloadAccounts();
-
-        // Salvar objeto completo — health, insights_7d, etc. vêm do servidor intactos
-        setInsights((p) => ({ ...p, [acc.id]: json }));
-      } else {
-        setInsights((p) => ({ ...p, [acc.id]: null }));
+        return { id: acc.id, data: json };
       }
+      return { id: acc.id, data: null };
     } catch {
-      setInsights((p) => ({ ...p, [acc.id]: null }));
+      return { id: acc.id, data: null };
     }
-
-    setLoadingIns((p) => ({ ...p, [acc.id]: false }));
   }, [reloadAccounts]);
 
-  // ── Atualizar em lotes de 10 em paralelo ───────────────────────────────────
+  // ── Atualiza lote sem pisca: busca tudo, depois faz 1 setState ──────────
+  const runBatch = useCallback(async (accs) => {
+    const BATCH = 10;
+    const results = {};
+    for (let i = 0; i < accs.length; i += BATCH) {
+      const batch = accs.slice(i, i + BATCH);
+      const res = await Promise.all(batch.map((acc) => fetchInsights(acc, true)));
+      res.forEach((r) => { if (r) results[r.id] = r.data; });
+      setRefreshProgress({ done: Math.min(i + BATCH, accs.length), total: accs.length });
+    }
+    // Um único setState para todos — sem pisca-pisca
+    setInsights((p) => ({ ...p, ...results }));
+    reloadAccounts();
+  }, [fetchInsights, reloadAccounts]);
+
+  // ── Botão "Atualizar tudo" ───────────────────────────────────────────────
   const handleRefreshAll = useCallback(async () => {
     if (refreshingAll || accounts.length === 0) return;
     setRefreshingAll(true);
     setRefreshProgress({ done: 0, total: accounts.length });
-    const BATCH = 10;
-    for (let i = 0; i < accounts.length; i += BATCH) {
-      const batch = accounts.slice(i, i + BATCH);
-      await Promise.all(batch.map((acc) => fetchInsights(acc, true)));
-      setRefreshProgress({ done: Math.min(i + BATCH, accounts.length), total: accounts.length });
-    }
+    await runBatch(accounts);
     setRefreshingAll(false);
-  }, [accounts, refreshingAll, fetchInsights]);
+  }, [accounts, refreshingAll, runBatch]);
 
-  // ── Auto-atualização a cada 30 minutos em segundo plano ─────────────────
+  // ── Fetch automático: 1x ao entrar + a cada 30 min em segundo plano ─────
   const fetchedRef = useRef(false);
   useEffect(() => {
-    if (accounts.length === 0) return;
-    const INTERVAL_MS = 30 * 60 * 1000;
-    const BATCH = 10;
-    const runSilent = async () => {
-      for (let i = 0; i < accounts.length; i += BATCH) {
-        const batch = accounts.slice(i, i + BATCH);
-        await Promise.all(batch.map((acc) => fetchInsights(acc, true)));
-      }
-    };
-    const timer = setInterval(runSilent, INTERVAL_MS);
+    if (loading || accounts.length === 0) return;
+    if (!fetchedRef.current) {
+      fetchedRef.current = true;
+      runBatch(accounts);
+    }
+    const timer = setInterval(() => runBatch(accounts), 30 * 60 * 1000);
     return () => clearInterval(timer);
-  }, [accounts, fetchInsights]);
+  }, [accounts, loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openDetail = (acc) => {
     setDetailAcc(acc);
