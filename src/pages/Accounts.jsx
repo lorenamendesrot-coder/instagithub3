@@ -23,7 +23,7 @@ function healthMeta(overall, tokenExpired) {
 
 // ── Avatar com bolinha de status ──────────────────────────────────────────────
 function Avatar({ acc, ins, size = 56 }) {
-  const initials = (acc.username || "?")[0].toUpperCase();
+  const initials = (acc.name || acc.username || "?")[0].toUpperCase();
   const gradients = [
     "linear-gradient(135deg, #7c5cfc, #e040fb)",
     "linear-gradient(135deg, #f59e0b, #ef4444)",
@@ -39,18 +39,21 @@ function Avatar({ acc, ins, size = 56 }) {
     : overall === "good"    ? "var(--success)"
     : "var(--muted)";
 
+  // Usa foto fresca dos insights (sempre atualizada), com fallback para a salva
+  const photoUrl = ins?.profile_picture || acc.profile_picture || "";
+
   return (
     <div style={{ position: "relative", flexShrink: 0 }}>
-      {acc.profile_picture && (
+      {photoUrl && (
         <img
-          src={acc.profile_picture} alt={acc.username}
+          src={photoUrl} alt={acc.username}
           style={{ width: size, height: size, borderRadius: "50%", objectFit: "cover", border: "2px solid var(--border2)", display: "block" }}
           onError={(e) => { e.target.style.display = "none"; e.target.nextSibling.style.display = "flex"; }}
         />
       )}
       <div style={{
         width: size, height: size, borderRadius: "50%", background: grad,
-        display: acc.profile_picture ? "none" : "flex",
+        display: photoUrl ? "none" : "flex",
         alignItems: "center", justifyContent: "center",
         fontSize: size * 0.38, fontWeight: 700, color: "#fff", border: "2px solid var(--border2)",
       }}>
