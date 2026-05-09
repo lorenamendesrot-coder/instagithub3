@@ -32,7 +32,7 @@ async function analyzeVideo(file) {
   });
 }
 
-const MIN_DURATION = 5; // segundos mínimos — bloqueado abaixo disso
+const MIN_DURATION = 3; // segundos mínimos — bloqueado abaixo disso
 
 function calcRisk(meta) {
   if (!meta) return null;
@@ -65,8 +65,9 @@ const RISK_STYLE = {
 };
 
 function ReelCard({ reel, sanitized, onRemove }) {
-  const [meta,      setMeta]      = useState(null);
-  const [analyzing, setAnalyzing] = useState(false);
+  const [meta,       setMeta]       = useState(null);
+  const [analyzing,  setAnalyzing]  = useState(false);
+  const [unlocked,   setUnlocked]   = useState(false); // desbloquear manualmente
 
   useEffect(() => {
     if (!reel.file) return;
@@ -75,7 +76,8 @@ function ReelCard({ reel, sanitized, onRemove }) {
   }, [reel.file]);
 
   const risk = calcRisk(meta);
-  const style = risk ? RISK_STYLE[risk.level] : RISK_STYLE.low;
+  const isBlocked = risk?.blocked && !unlocked;
+  const style = isBlocked ? RISK_STYLE.blocked : risk ? RISK_STYLE[risk.level] : RISK_STYLE.low;
 
   const checks = meta ? [
     {
@@ -149,12 +151,28 @@ function ReelCard({ reel, sanitized, onRemove }) {
       {risk?.blocked && (
         <div style={{
           padding: "8px 12px", borderRadius: 8, marginBottom: 10,
-          background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.4)",
-          fontSize: 12, fontWeight: 700, color: "var(--danger)",
-          display: "flex", alignItems: "center", gap: 8,
+          background: isBlocked ? "rgba(239,68,68,0.15)" : "rgba(245,158,11,0.1)",
+          border: `1px solid ${isBlocked ? "rgba(239,68,68,0.4)" : "rgba(245,158,11,0.3)"}`,
+          fontSize: 12, fontWeight: 600,
+          color: isBlocked ? "var(--danger)" : "var(--warning)",
+          display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
         }}>
-          🚫 BLOQUEADO — Duração {fmtDuration(meta?.duration)} é menor que {MIN_DURATION}s.
-          Este reel não será postado. Remova-o ou substitua por um vídeo mais longo.
+          <span style={{ flex: 1 }}>
+            {isBlocked ? "🚫" : "⚠️"} Duração {fmtDuration(meta?.duration)} é menor que {MIN_DURATION}s.
+            {isBlocked ? " Este reel está bloqueado." : " Postagem forçada — pode ser rejeitada pelo Instagram."}
+          </span>
+          <button
+            onClick={() => setUnlocked(u => !u)}
+            style={{
+              padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer",
+              background: isBlocked ? "rgba(239,68,68,0.15)" : "rgba(245,158,11,0.15)",
+              border: `1px solid ${isBlocked ? "rgba(239,68,68,0.4)" : "rgba(245,158,11,0.4)"}`,
+              color: isBlocked ? "var(--danger)" : "var(--warning)",
+              flexShrink: 0,
+            }}
+          >
+            {isBlocked ? "🔓 Desbloquear" : "🔒 Bloquear"}
+          </button>
         </div>
       )}
 
