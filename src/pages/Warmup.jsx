@@ -589,6 +589,8 @@ export default function Warmup() {
 
   const previewStats = useMemo(() => {
     const byAcc  = {};
+    // Filtrar reels bloqueados (< 5s) antes de agendar
+    const MIN_REEL_DURATION = 5;
     const byType = { reels: 0, feed: 0, stories: 0 };
     queue.forEach((s) => {
       byAcc[s.username] = (byAcc[s.username] || 0) + 1;
@@ -679,7 +681,7 @@ export default function Warmup() {
             ))}
           </div>
 
-          {reelFiles.length > 0 && <ReelChecklist reels={reelFiles} sanitizedIds={[]} />}
+          {reelFiles.length > 0 && <ReelChecklist reels={reelFiles} sanitizedIds={[]} onRemove={(id) => removeFile("reels", id)} />}
 
           {stats.totalDone > 0 && (
             <div style={{
