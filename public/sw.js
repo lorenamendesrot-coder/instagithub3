@@ -60,7 +60,28 @@ async function runItem(item) {
 
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
       const data = await res.json();
-      const results = data.results || [];
+      let results = data.results || [];
+
+      // Trata vídeos com pending: true — tenta media_publish separado após aguardar
+      const pendingResults = results.filter((r) => r.pending && r.creation_id);
+      if (pendingResults.length > 0) {
+        await sleep(15000); // aguarda mais 15s para o Instagram processar o vídeo
+        const retryRes = await fetch(`${origin}/.netlify/functions/publish-finish`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pending: pendingResults, accounts: item.accounts }),
+        });
+        if (retryRes.ok) {
+          const retryData = await retryRes.json();
+          // Substitui os resultados pending pelos finais
+          results = results.map((r) => {
+            if (!r.pending) return r;
+            const finished = (retryData.results || []).find((f) => f.account_id === r.account_id);
+            return finished || r;
+          });
+        }
+      }
+
       totalResults = [...totalResults, ...results];
       totalSuccesses += results.filter((r) => r.success).length;
 
