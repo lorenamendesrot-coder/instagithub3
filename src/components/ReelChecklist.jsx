@@ -64,7 +64,7 @@ const RISK_STYLE = {
   low:     { bg: "rgba(34,197,94,0.07)",   border: "rgba(34,197,94,0.2)",   text: "var(--success)", label: "Risco Baixo" },
 };
 
-function ReelCard({ reel, sanitized, onRemove }) {
+function ReelCard({ reel, sanitized, sanitizeReport, onRemove }) {
   const [meta,       setMeta]       = useState(null);
   const [analyzing,  setAnalyzing]  = useState(false);
   const [unlocked,   setUnlocked]   = useState(false); // desbloquear manualmente
@@ -97,9 +97,16 @@ function ReelCard({ reel, sanitized, onRemove }) {
       label: `Tamanho: ${fmtSize(meta.size)}`,
     },
     {
-      ok:   sanitized,
-      warn: !sanitized,
-      label: sanitized ? "Sanitizado ✓" : "Aguardando sanitização",
+      ok:   sanitized && sanitizeReport && !sanitizeReport.error,
+      warn: !sanitized || (sanitizeReport && sanitizeReport.error),
+      label: sanitized && sanitizeReport && !sanitizeReport.error
+        ? `Sanitizado ✓ · ID:${sanitizeReport.uniqueId}`
+        : sanitized && sanitizeReport?.error
+        ? `Sanitização parcial`
+        : "Aguardando sanitização",
+      detail: sanitized && sanitizeReport && !sanitizeReport.error
+        ? sanitizeReport.removed?.join(", ")
+        : null,
     },
   ] : [];
 
@@ -193,6 +200,23 @@ function ReelCard({ reel, sanitized, onRemove }) {
         </div>
       )}
 
+      {/* Detalhes de sanitização */}
+      {sanitized && sanitizeReport && !sanitizeReport.error && (
+        <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: "rgba(34,197,94,0.05)", border: "1px solid rgba(34,197,94,0.15)", fontSize: 11 }}>
+          <div style={{ color: "var(--success)", fontWeight: 600, marginBottom: 4 }}>🔒 Metadados limpos</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+            {(sanitizeReport.removed || []).map((r, i) => (
+              <span key={i} style={{ padding: "1px 7px", borderRadius: 4, background: "rgba(34,197,94,0.08)", color: "var(--success)", border: "1px solid rgba(34,197,94,0.15)" }}>{r}</span>
+            ))}
+          </div>
+          <div style={{ color: "var(--muted)", marginTop: 4 }}>
+            ID único: <span style={{ fontFamily: "monospace", color: "var(--text)" }}>{sanitizeReport.uniqueId}</span>
+            · {sanitizeReport.durationMs}ms
+            · {(sanitizeReport.originalSize/1024).toFixed(0)}KB → {(sanitizeReport.sanitizedSize/1024).toFixed(0)}KB
+          </div>
+        </div>
+      )}
+
       {/* Issues */}
       {risk?.issues?.length > 0 && !analyzing && (
         <div style={{ marginTop: 8 }}>
@@ -232,7 +256,7 @@ export default function ReelChecklist({ reels, sanitizedIds = [], onRemove }) {
 
       <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 8 }}>
         {reels.map((r) => (
-          <ReelCard key={r.id} reel={r} sanitized={sanitizedIds.includes(r.id)} onRemove={onRemove} />
+          <ReelCard key={r.id} reel={r} sanitized={sanitizedIds.includes(r.id)} sanitizeReport={r.sanitizationReport} onRemove={onRemove} />
         ))}
       </div>
 
