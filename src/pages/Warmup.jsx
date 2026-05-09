@@ -496,6 +496,7 @@ export default function Warmup() {
         name,
         size:     0,
         status:   "done",   // já está pronta — não precisa de upload
+        sanitizationReport: item.sanitizationReport || null,
         progress: 100,
         url,
         error:    "",
