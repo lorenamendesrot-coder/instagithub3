@@ -118,18 +118,18 @@ function SchedulerProvider({ addEntry, children }) {
           } else {
             // Ainda processando — reagenda
             const attempts = (vf.attempts || 0) + 1;
-            if (attempts >= (vf.maxAttempts || 8)) {
+            if (attempts >= (vf.maxAttempts || 20)) {
               await dbPut("queue", { ...vf, status: "error", error: "Timeout: vídeo não processou" });
             } else {
-              await dbPut("queue", { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 30000 });
+              await dbPut("queue", { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 45000 });
             }
           }
         } catch (err) {
           const attempts = (vf.attempts || 0) + 1;
-          if (attempts >= (vf.maxAttempts || 8)) {
+          if (attempts >= (vf.maxAttempts || 20)) {
             await dbPut("queue", { ...vf, status: "error", error: err.message });
           } else {
-            await dbPut("queue", { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 20000 });
+            await dbPut("queue", { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 45000 });
           }
         }
         runningRef.current.delete(vf.id);
@@ -209,7 +209,7 @@ function SchedulerProvider({ addEntry, children }) {
                 caption:     item.caption || "",
                 createdAt:   new Date().toISOString(),
                 attempts:    0,
-                maxAttempts: 8,
+                maxAttempts: 20,
               });
             }
 
