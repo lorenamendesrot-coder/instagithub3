@@ -214,6 +214,8 @@ export default function Accounts() {
   const [renamingAcc,     setRenamingAcc]     = useState(null);
   const [refreshingAll,   setRefreshingAll]   = useState(false);
   const [refreshProgress, setRefreshProgress] = useState({ done: 0, total: 0 });
+  const [checkingTokens,  setCheckingTokens]  = useState(false);
+  const [tokenResults,    setTokenResults]    = useState(null); // null = não verificado ainda
 
   const APP_ID   = import.meta.env.VITE_META_APP_ID;
   const REDIRECT = encodeURIComponent(window.location.origin + "/api/auth-callback");
@@ -277,6 +279,23 @@ export default function Accounts() {
     setInsights((p) => ({ ...p, ...results }));
     reloadAccounts();
   }, [fetchInsights, reloadAccounts]);
+
+  // ── Verificar tokens ────────────────────────────────────────────────────
+  const handleCheckTokens = useCallback(async () => {
+    setCheckingTokens(true);
+    setTokenResults(null);
+    try {
+      const res  = await fetch("/api/check-tokens");
+      const data = await res.json();
+      setTokenResults(data.results || []);
+      // Atualiza status local das contas
+      await reloadAccounts();
+    } catch (err) {
+      alert("Erro ao verificar tokens: " + err.message);
+    } finally {
+      setCheckingTokens(false);
+    }
+  }, [reloadAccounts]);
 
   // ── Botão "Atualizar tudo" ───────────────────────────────────────────────
   const handleRefreshAll = useCallback(async () => {
@@ -343,12 +362,56 @@ export default function Accounts() {
               Remover todas
             </button>
           )}
+          <button className="btn btn-ghost btn-sm" onClick={handleCheckTokens} disabled={checkingTokens || accounts.length === 0}>
+            {checkingTokens ? <><span className="spinner" style={{ width: 12, height: 12 }} /> Verificando...</> : "🔍 Verificar tokens"}
+          </button>
           <button className="btn btn-ghost btn-sm" onClick={() => setShowPageIdModal(true)}>
             🔑 Adicionar via Page ID
           </button>
           <a href={oauthUrl} className="btn btn-primary">+ Conta</a>
         </div>
       </div>
+
+      {/* ── Painel de resultado de tokens ─────────────────────────────────── */}
+      {tokenResults && (
+        <div style={{ marginBottom: 20, background: "var(--bg2)", borderRadius: 14, border: "1px solid var(--border)", overflow: "hidden" }}>
+          <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ fontSize: 13, fontWeight: 700 }}>🔍 Diagnóstico de Tokens</div>
+            <button onClick={() => setTokenResults(null)} style={{ background: "none", color: "var(--muted)", fontSize: 18, padding: "0 4px" }}>×</button>
+          </div>
+          <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
+            {tokenResults.map((r) => {
+              const ok      = r.is_valid && !r.error;
+              const renewed = r.refresh?.renewed;
+              const bg      = ok    ? "rgba(34,197,94,0.05)"   : "rgba(239,68,68,0.05)";
+              const border  = ok    ? "rgba(34,197,94,0.2)"    : "rgba(239,68,68,0.2)";
+              const icon    = ok    ? "✅" : "❌";
+              return (
+                <div key={r.id} style={{ padding: "10px 14px", borderRadius: 10, background: bg, border: `1px solid ${border}`, fontSize: 12 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: ok ? 4 : 0 }}>
+                    <span style={{ fontWeight: 700 }}>{icon} @{r.username}</span>
+                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      {renewed && <span style={{ fontSize: 10, padding: "1px 8px", borderRadius: 4, background: "rgba(34,197,94,0.15)", color: "var(--success)", border: "1px solid rgba(34,197,94,0.3)" }}>🔄 Renovado</span>}
+                      {r.never_expires && <span style={{ fontSize: 10, padding: "1px 8px", borderRadius: 4, background: "rgba(124,92,252,0.1)", color: "var(--accent)", border: "1px solid rgba(124,92,252,0.25)" }}>∞ Sem expiração</span>}
+                      {r.days_left !== null && <span style={{ fontSize: 10, color: r.days_left < 7 ? "var(--danger)" : r.days_left < 20 ? "var(--warning)" : "var(--muted)" }}>{r.days_left}d restantes</span>}
+                    </div>
+                  </div>
+                  {r.error && <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 3 }}>{r.error}</div>}
+                  {r.refresh && !r.refresh.renewed && r.refresh.reason && (
+                    <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>ℹ️ {r.refresh.reason}</div>
+                  )}
+                  {ok && (
+                    <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
+                      Tipo: {r.token_type}
+                      {r.scopes?.length > 0 && ` · Escopos: ${r.scopes.slice(0, 4).join(", ")}${r.scopes.length > 4 ? ` +${r.scopes.length - 4}` : ""}`}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ── Modais ─────────────────────────────────────────────────────────── */}
       {showPageIdModal && <AddViaPageModal onClose={() => setShowPageIdModal(false)} onAdded={handleAddViaPage} />}
