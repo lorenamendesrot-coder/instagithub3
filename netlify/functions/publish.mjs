@@ -4,6 +4,8 @@ import http  from "http";
 import crypto from "crypto";
 import { sanitizeMedia, varyMediaForAccount, detectMime } from "./sanitize-media.mjs";
 
+import { getStore } from "@netlify/blobs";
+
 const GRAPH = "https://graph.facebook.com/v21.0";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || process.env.URL || "";
@@ -135,6 +137,22 @@ function recordPost(id,ok){const s=getState(id);if(ok){s.postsToday++;s.postsHou
 
 function isHttps(url){try{return new URL(url).protocol==="https:";}catch{return false;}}
 
+// ─── Busca token atualizado do Blobs ─────────────────────────────────────────
+// Sempre que o publish roda, busca o token mais recente salvo no Blobs
+// Isso garante que tokens renovados pelo check-tokens.mjs sejam usados
+async function getFreshToken(accountId) {
+  try {
+    const siteID = process.env.NETLIFY_SITE_ID;
+    const token  = process.env.NETLIFY_TOKEN;
+    if (!siteID || !token) return null;
+    const store = getStore({ name: "insta-accounts", siteID, token, consistency: "strong" });
+    const acc   = await store.get(`account-${accountId}`, { type: "json" });
+    return acc?.access_token || null;
+  } catch {
+    return null;
+  }
+}
+
 async function verifyToken(token){
   try{const r=await fetch(`${GRAPH}/me?fields=id&access_token=${token}`),d=await r.json();
     if(d.error)return{valid:false,expired:d.error.code===190};return{valid:true,expired:false};}
@@ -152,7 +170,17 @@ async function waitForContainer(id,token,max=20){
 }
 
 async function publishOne({account, media_url, media_type, post_type, caption, unique_media_url}){
-  const{id:igId,access_token:token}=account;
+  const igId = account.id;
+
+  // Sempre busca o token mais recente do Blobs — ignora o token do IndexedDB
+  // que pode estar desatualizado após uma renovação pelo check-tokens.mjs
+  const freshToken = await getFreshToken(igId);
+  const token      = freshToken || account.access_token;
+
+  if (!token) return { success: false, error: "Token não encontrado. Reconecte a conta.", token_expired: true };
+
+  console.log(`[${account.username}] Usando token ${freshToken ? "fresco do Blobs" : "do agendamento (fallback)"}`);
+
   const isVideo=media_type==="VIDEO";
   const tc=await verifyToken(token);
   if(!tc.valid)return{success:false,error:tc.expired?"Token expirado. Reconecte a conta.":"Token inválido.",token_expired:tc.expired};
