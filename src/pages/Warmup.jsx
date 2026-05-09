@@ -716,12 +716,46 @@ export default function Warmup() {
       {/* ══ TAB: Preview da Fila ═════════════════════════════════════════════════ */}
       {tab === "preview" && (
         <div>
-          {queue.length === 0 ? (
+          {/* Usa queue local se existir, senão mostra itens já salvos do DB */}
+          {queue.length === 0 && dbQueue.length === 0 ? (
             <div style={{ textAlign: "center", padding: 60, color: "var(--muted)" }}>
               <div style={{ fontSize: 40, marginBottom: 12 }}>📅</div>
               <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 6 }}>Fila vazia</div>
               <div style={{ fontSize: 12 }}>Vá para Configuração e clique em "Gerar Fila de Aquecimento".</div>
               <button className="btn btn-ghost btn-sm" style={{ marginTop: 16 }} onClick={() => setTab("config")}>⚙️ Ir para Configuração</button>
+            </div>
+          ) : queue.length === 0 ? (
+            // Após salvar / recarregar página: mostra o que está no DB
+            <div>
+              <div style={{ marginBottom: 14, padding: "10px 14px", borderRadius: 10, background: "rgba(34,197,94,0.07)", border: "1px solid rgba(34,197,94,0.2)", fontSize: 12, color: "var(--success)" }}>
+                ✅ {dbQueue.length} posts agendados no banco. Acompanhe o andamento na aba Monitor.
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 5, maxHeight: 480, overflowY: "auto" }}>
+                {[...dbQueue].sort((a, b) => a.scheduledAt - b.scheduledAt).map((s) => {
+                  const typeIcon = { reels: "🎬", feed: "🖼", stories: "⭕" }[s.mediaCategory] || "📎";
+                  const statusColor = s.status === "done" ? "var(--success)" : s.status === "error" ? "var(--danger)" : s.status === "running" ? "var(--warning)" : "var(--muted)";
+                  return (
+                    <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 10, background: "var(--bg2)", border: "1px solid var(--border)" }}>
+                      <span style={{ fontSize: 16, flexShrink: 0 }}>{typeIcon}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600 }}>@{s.username}</div>
+                        <div style={{ fontSize: 11, color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {s.mediaName || (s.mediaUrl || "").split("/").pop()}
+                        </div>
+                      </div>
+                      <div style={{ flexShrink: 0, textAlign: "right" }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: statusColor, marginBottom: 3, textTransform: "uppercase" }}>{s.status}</div>
+                        <div style={{ fontSize: 11, fontWeight: 600 }}>
+                          {new Date(s.scheduledAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ marginTop: 12 }}>
+                <button className="btn btn-ghost btn-sm" onClick={() => setTab("config")}>⚙️ Novo agendamento</button>
+              </div>
             </div>
           ) : (
             <>
