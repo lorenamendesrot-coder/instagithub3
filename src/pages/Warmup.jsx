@@ -334,8 +334,48 @@ function MediaUploadZone({ typeConfig, files, onAddFiles, onRemoveFile, onUpload
                 <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{f.name}</div>
                 <div style={{ fontSize: 10, color: "var(--muted)" }}>{fmtSize(f.size)}</div>
                 {f.status === "uploading" && (
-                  <div style={{ marginTop: 3, height: 2, background: "var(--border)", borderRadius: 1, overflow: "hidden" }}>
-                    <div style={{ height: "100%", width: `${f.progress}%`, background: "var(--accent)", transition: "width 0.3s" }} />
+                  <div style={{ marginTop: 4 }}>
+                    {/* Barra de sanitização */}
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 1 }}>
+                      <span style={{ fontSize: 9, color: (f.sanitizeProgress || 0) >= 100 ? "var(--success)" : "var(--warning)" }}>
+                        🔒 Sanitização
+                      </span>
+                      <span style={{ fontSize: 9, color: (f.sanitizeProgress || 0) >= 100 ? "var(--success)" : "var(--warning)", fontWeight: 700 }}>
+                        {(f.sanitizeProgress || 0) >= 100 ? "✓" : `${f.sanitizeProgress || 0}%`}
+                      </span>
+                    </div>
+                    <div style={{ height: 2, background: "var(--border)", borderRadius: 1, overflow: "hidden", marginBottom: 3 }}>
+                      <div style={{ height: "100%", width: `${f.sanitizeProgress || 0}%`, background: (f.sanitizeProgress || 0) >= 100 ? "var(--success)" : "var(--warning)", transition: "width 0.3s" }} />
+                    </div>
+                    {/* Barra de upload */}
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 1 }}>
+                      <span style={{ fontSize: 9, color: f.progress >= 100 ? "var(--success)" : "var(--accent-light)" }}>☁️ Upload</span>
+                      <span style={{ fontSize: 9, color: f.progress >= 100 ? "var(--success)" : "var(--accent-light)", fontWeight: 700 }}>
+                        {f.progress >= 18 ? `${f.progress}%` : "Aguardando..."}
+                      </span>
+                    </div>
+                    <div style={{ height: 2, background: "var(--border)", borderRadius: 1, overflow: "hidden" }}>
+                      <div style={{ height: "100%", width: `${Math.max(0, f.progress - 18)}%`, background: f.progress >= 100 ? "var(--success)" : "var(--accent)", transition: "width 0.3s" }} />
+                    </div>
+                  </div>
+                )}
+                {/* Badge sanitização + metadados após concluído */}
+                {f.status === "done" && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 3, flexWrap: "wrap" }}>
+                    {f.sanitizationReport && !f.sanitizationReport.error ? (
+                      <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "rgba(34,197,94,0.1)", color: "var(--success)", border: "1px solid rgba(34,197,94,0.2)" }}>
+                        ✅ Sanitizado · ID:{f.sanitizationReport.uniqueId}
+                      </span>
+                    ) : f.sanitizationReport?.error ? (
+                      <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "rgba(245,158,11,0.1)", color: "var(--warning)", border: "1px solid rgba(245,158,11,0.2)" }}>
+                        ⚠ Sanitização parcial
+                      </span>
+                    ) : null}
+                    {f.sanitizationReport && !f.sanitizationReport.error && (
+                      <span style={{ fontSize: 9, color: "var(--muted)" }}>
+                        {(f.sanitizationReport.originalSize / 1024).toFixed(0)}KB→{(f.sanitizationReport.sanitizedSize / 1024).toFixed(0)}KB · {f.sanitizationReport.durationMs}ms
+                      </span>
+                    )}
                   </div>
                 )}
                 {f.status === "error" && <div style={{ fontSize: 10, color: "var(--danger)", marginTop: 2 }}>✗ {f.error}</div>}
@@ -530,14 +570,39 @@ export default function Warmup() {
     if (!pending.length) return;
     setUploading(true);
     for (const entry of pending) {
-      setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, status: "uploading", progress: 0, error: "" } : f) }));
+      // Resetar estado — incluindo sanitizeProgress separado
+      setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) =>
+        f.id === entry.id
+          ? { ...f, status: "uploading", progress: 0, sanitizeProgress: 0, error: "", sanitizationReport: null }
+          : f
+      )}));
       try {
-        const url = await uploadFile(entry.file, (progress) => {
-          setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, progress } : f) }));
-        });
-        setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, status: "done", url, progress: 100 } : f) }));
+        const url = await uploadFile(
+          entry.file,
+          // onProgress — progresso geral de upload (18–100%)
+          (progress) => {
+            setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) =>
+              f.id === entry.id ? { ...f, progress } : f
+            )}));
+          },
+          // onSanitized — salva o relatório de sanitização assim que termina
+          (report) => {
+            setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) =>
+              f.id === entry.id
+                ? { ...f, sanitizationReport: report, sanitizeProgress: 100 }
+                : f
+            )}));
+          },
+        );
+        setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) =>
+          f.id === entry.id
+            ? { ...f, status: "done", url, progress: 100, sanitizeProgress: 100 }
+            : f
+        )}));
       } catch (err) {
-        setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, status: "error", error: err.message } : f) }));
+        setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) =>
+          f.id === entry.id ? { ...f, status: "error", error: err.message } : f
+        )}));
       }
     }
     setUploading(false);
