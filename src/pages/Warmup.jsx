@@ -38,6 +38,17 @@ const WARMUP_PRESET_2D = {
       intervalMinMin: 60,
       intervalMinMax: 120,
     },
+    {
+      day: 3,
+      label: "Dia 3 — Manutenção de Nível",
+      reels:   4,
+      feed:    2,
+      stories: 3,
+      windowStart: "09:00",
+      windowEnd:   "21:30",
+      intervalMinMin: 70,
+      intervalMinMax: 130,
+    },
   ],
 };
 
@@ -155,13 +166,28 @@ function generateSlotTimes(dayBase, count, plan) {
   return times;
 }
 
-function buildWarmupQueue({ accounts, mediaByType, captions, captionMode, preset, startDateStr, distribution }) {
+function buildWarmupQueue({ accounts, mediaByType, captions, captionMode, preset, startDateStr, distribution, loopEnabled, loopDays }) {
   const slots = [];
   if (!accounts.length) return slots;
 
   const startBase = new Date(startDateStr + "T00:00:00");
 
-  preset.days.forEach((dayPlan) => {
+  // Dias base do preset + dias extras em loop (repetindo o Dia 3 de manutenção)
+  const baseDays = preset.days;
+  const allDays  = [...baseDays];
+
+  if (loopEnabled && loopDays > 0) {
+    const maintenanceDay = baseDays[baseDays.length - 1]; // Dia 3
+    for (let extra = 1; extra <= loopDays; extra++) {
+      allDays.push({
+        ...maintenanceDay,
+        day:   baseDays.length + extra,
+        label: `Dia ${baseDays.length + extra} — Manutenção (Loop ${extra})`,
+      });
+    }
+  }
+
+  allDays.forEach((dayPlan) => {
     const dayBase = new Date(startBase);
     dayBase.setDate(dayBase.getDate() + (dayPlan.day - 1));
 
@@ -501,7 +527,9 @@ export default function Warmup() {
   const [useNewOnly,   setUseNewOnly]   = useState(true);
   const [selectedAccIds, setSelectedAccIds] = useState(null); // null = todas selecionadas
   const [urlInputs,    setUrlInputs]    = useState({ reels: "", feed: "", stories: "" });
-  const [dayConfig,    setDayConfig]    = useState(WARMUP_PRESET_2D.days);
+  const [dayConfig,       setDayConfig]       = useState(WARMUP_PRESET_2D.days);
+  const [loopEnabled,     setLoopEnabled]     = useState(false);
+  const [loopDays,        setLoopDays]        = useState(7); // quantos dias extras em loop
   const [queue,        setQueue]        = useState([]);
   const [saving,       setSaving]       = useState(false);
   const [saved,        setSaved]        = useState(false);
@@ -671,11 +699,12 @@ export default function Warmup() {
       captions: parsedCaptions, captionMode,
       preset: { ...WARMUP_PRESET_2D, days: dayConfig },
       startDateStr: startDate, distribution,
+      loopEnabled, loopDays,
     });
     setQueue(generated);
     setSaved(false);
     setTab("preview");
-  }, [files, selectedAccounts, parsedCaptions, captionMode, dayConfig, startDate, distribution, stats.totalDone]);
+  }, [files, selectedAccounts, parsedCaptions, captionMode, dayConfig, startDate, distribution, stats.totalDone, loopEnabled, loopDays]);
 
   const confirmQueue = useCallback(async () => {
     if (!queue.length) return;
@@ -1077,6 +1106,78 @@ export default function Warmup() {
             </div>
           ))}
 
+          {/* ── Card de Loop ── */}
+          <div className="card" style={{
+            borderColor: loopEnabled ? "rgba(124,92,252,0.35)" : "var(--border)",
+            background: loopEnabled ? "rgba(124,92,252,0.04)" : "var(--bg2)",
+            transition: "all 0.2s",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: loopEnabled ? 16 : 0 }}>
+              <span style={{ fontSize: 20 }}>🔁</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 13 }}>Loop de Manutenção</div>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+                  Repete o Dia 3 por quantos dias você quiser após o aquecimento
+                </div>
+              </div>
+              <div
+                onClick={() => setLoopEnabled((p) => !p)}
+                style={{
+                  width: 44, height: 24, borderRadius: 12, cursor: "pointer",
+                  background: loopEnabled ? "var(--accent)" : "var(--border2)",
+                  position: "relative", transition: "background 0.2s", flexShrink: 0,
+                }}
+              >
+                <div style={{
+                  position: "absolute", top: 3, left: loopEnabled ? 22 : 2,
+                  width: 18, height: 18, borderRadius: "50%", background: "#fff",
+                  transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+                }} />
+              </div>
+            </div>
+
+            {loopEnabled && (
+              <div>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 10 }}>
+                  Quantos dias extras de manutenção (além dos 3 do aquecimento)?
+                </div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+                  {[3, 5, 7, 10, 14, 21, 30].map((d) => (
+                    <button
+                      key={d}
+                      onClick={() => setLoopDays(d)}
+                      className={`btn btn-sm ${loopDays === d ? "btn-primary" : "btn-ghost"}`}
+                      style={{ fontSize: 12, padding: "6px 14px" }}
+                    >
+                      {d}d
+                    </button>
+                  ))}
+                  <input
+                    type="number"
+                    min={1}
+                    max={90}
+                    value={loopDays}
+                    onChange={(e) => setLoopDays(Math.max(1, Math.min(90, parseInt(e.target.value) || 1)))}
+                    style={{ width: 70, padding: "6px 10px", fontSize: 12 }}
+                    placeholder="Custom"
+                  />
+                </div>
+                <div style={{
+                  padding: "10px 14px", borderRadius: 8,
+                  background: "rgba(124,92,252,0.06)", border: "1px solid rgba(124,92,252,0.2)",
+                  fontSize: 12, color: "var(--muted)",
+                }}>
+                  📅 Aquecimento: <b style={{ color: "var(--text)" }}>3 dias</b>
+                  {" "}+ Loop: <b style={{ color: "var(--accent-light)" }}>{loopDays} dias</b>
+                  {" "}= <b style={{ color: "var(--text)" }}>{3 + loopDays} dias no total</b>
+                  <div style={{ marginTop: 4 }}>
+                    🔁 O Dia 3 (Manutenção) se repete <b style={{ color: "var(--text)" }}>{loopDays}x</b> com os mesmos posts e horários
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
           <button
             className="btn btn-primary"
             onClick={generateQueue}
@@ -1138,15 +1239,16 @@ export default function Warmup() {
                 </div>
               </div>
 
-              {/* Por dia */}
-              {[1, 2].map((day) => {
+              {/* Por dia — dinâmico para suportar loop */}
+              {Array.from(new Set(queue.map((s) => s.scheduledDay))).sort((a, b) => a - b).map((day) => {
                 const daySlots = queue.filter((s) => s.scheduledDay === day);
-                if (!daySlots.length) return null;
+                const isLoop   = day > WARMUP_PRESET_2D.days.length;
                 return (
                   <div key={day} style={{ marginBottom: 20 }}>
-                    <div style={{ fontWeight: 700, fontSize: 13, color: "var(--accent-light)", marginBottom: 10 }}>
-                      📅 Dia {day} — {daySlots.length} post(s)
-                    </div>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: isLoop ? "var(--success)" : "var(--accent-light)", marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+                    {isLoop ? "🔁" : "📅"} Dia {day} — {daySlots.length} post(s)
+                    {isLoop && <span className="badge badge-success" style={{ fontSize: 10 }}>Loop</span>}
+                  </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 5, maxHeight: 300, overflowY: "auto" }}>
                       {daySlots.map((s) => {
                         const typeIcon = { reels: "🎬", feed: "🖼", stories: "⭕" }[s.mediaCategory] || "📎";
