@@ -649,30 +649,94 @@ export default function Warmup() {
                 </div>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
-                {[
-                  { label: "Início da janela",  key: "windowStart",    type: "time"   },
-                  { label: "Fim da janela",      key: "windowEnd",      type: "time"   },
-                  { label: "Intervalo mín (min)",key: "intervalMinMin", type: "number" },
-                  { label: "Intervalo máx (min)",key: "intervalMinMax", type: "number" },
-                ].map(({ label, key, type }) => (
-                  <div key={key}>
-                    <label>{label}</label>
-                    <input
-                      type={type}
-                      value={dayPlan[key]}
-                      min={type === "number" ? 30 : undefined}
-                      max={type === "number" ? 360 : undefined}
-                      onChange={(e) => updateDayConfig(dayPlan.day, key, type === "number" ? (parseInt(e.target.value) || 60) : e.target.value)}
-                    />
+              {/* ── Ritmo de postagem ── */}
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+                  ⏱ Ritmo de postagem
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                  {[
+                    { label: "1h em 1h",  min: 60,  max: 75,  jitter: 8  },
+                    { label: "2h em 2h",  min: 120, max: 140, jitter: 12 },
+                    { label: "3h em 3h",  min: 180, max: 205, jitter: 15 },
+                    { label: "4h em 4h",  min: 240, max: 265, jitter: 18 },
+                    { label: "6h em 6h",  min: 360, max: 390, jitter: 20 },
+                  ].map(({ label, min, max, jitter }) => {
+                    const active = dayPlan.intervalMinMin === min && dayPlan.intervalMinMax === max;
+                    return (
+                      <button
+                        key={label}
+                        onClick={() => {
+                          updateDayConfig(dayPlan.day, "intervalMinMin", min);
+                          updateDayConfig(dayPlan.day, "intervalMinMax", max);
+                          updateDayConfig(dayPlan.day, "jitterMin",      jitter);
+                        }}
+                        style={{
+                          padding: "6px 12px", borderRadius: 20, fontSize: 12, cursor: "pointer",
+                          fontWeight: active ? 700 : 400, border: "none",
+                          background: active ? "var(--accent)" : "var(--bg3)",
+                          color: active ? "#fff" : "var(--muted)",
+                          border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
+                          transition: "all 0.12s",
+                        }}
+                      >
+                        {label}
+                        {active && <span style={{ marginLeft: 4, fontSize: 10, opacity: 0.8 }}>✓</span>}
+                      </button>
+                    );
+                  })}
+                  <button
+                    onClick={() => {
+                      updateDayConfig(dayPlan.day, "intervalMinMin", dayPlan.intervalMinMin);
+                      updateDayConfig(dayPlan.day, "intervalMinMax", dayPlan.intervalMinMax);
+                    }}
+                    style={{
+                      padding: "6px 10px", borderRadius: 20, fontSize: 11, cursor: "pointer",
+                      background: "transparent", border: "1px dashed var(--border2)",
+                      color: "var(--muted)",
+                    }}
+                  >
+                    ✏️ Personalizado
+                  </button>
+                </div>
+
+                {/* Inputs de janela + intervalo personalizado */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
+                  <div>
+                    <label style={{ fontSize: 11 }}>Início da janela</label>
+                    <input type="time" value={dayPlan.windowStart}
+                      onChange={(e) => updateDayConfig(dayPlan.day, "windowStart", e.target.value)} />
                   </div>
-                ))}
+                  <div>
+                    <label style={{ fontSize: 11 }}>Fim da janela</label>
+                    <input type="time" value={dayPlan.windowEnd}
+                      onChange={(e) => updateDayConfig(dayPlan.day, "windowEnd", e.target.value)} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11 }}>Intervalo mín (min)</label>
+                    <input type="number" min={15} max={720} value={dayPlan.intervalMinMin}
+                      onChange={(e) => updateDayConfig(dayPlan.day, "intervalMinMin", parseInt(e.target.value) || 60)} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11 }}>Intervalo máx (min)</label>
+                    <input type="number" min={15} max={720} value={dayPlan.intervalMinMax}
+                      onChange={(e) => updateDayConfig(dayPlan.day, "intervalMinMax", parseInt(e.target.value) || 90)} />
+                  </div>
+                </div>
               </div>
 
-              <div style={{ marginTop: 12, padding: "8px 12px", borderRadius: 8, background: "rgba(124,92,252,0.05)", border: "1px solid rgba(124,92,252,0.15)", fontSize: 11, color: "var(--muted)" }}>
+              {/* Resumo */}
+              <div style={{ padding: "8px 12px", borderRadius: 8, background: "rgba(124,92,252,0.05)", border: "1px solid rgba(124,92,252,0.15)", fontSize: 11, color: "var(--muted)" }}>
                 📊 Total por conta: <b style={{ color: "var(--text)" }}>{dayPlan.reels + dayPlan.feed + dayPlan.stories} posts</b>
                 {" "}· Janela: <b style={{ color: "var(--text)" }}>{dayPlan.windowStart} – {dayPlan.windowEnd}</b>
-                {" "}· Jitter: <b style={{ color: "var(--text)" }}>±40min + seg aleatórios</b>
+                {" "}· Ritmo: <b style={{ color: "var(--text)" }}>
+                  {dayPlan.intervalMinMin === dayPlan.intervalMinMax
+                    ? `${dayPlan.intervalMinMin}min`
+                    : `${dayPlan.intervalMinMin}–${dayPlan.intervalMinMax}min`}
+                </b>
+                {" "}· Jitter: <b style={{ color: "var(--accent-light)" }}>
+                  ±{dayPlan.jitterMin ?? 10}min + seg aleatórios
+                </b>
               </div>
             </div>
           ))}
