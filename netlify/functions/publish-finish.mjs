@@ -24,18 +24,22 @@ async function getFreshToken(accountId) {
   }
 }
 
-// Poll até FINISHED — máximo 5×4s = 20s (dentro do timeout de 26s)
+// Poll até FINISHED — máximo 5×4s = 20s
+// Se não confirmar FINISHED, tenta o publish mesmo assim (Instagram frequentemente aceita)
 async function pollUntilReady(creationId, token) {
   for (let i = 0; i < 5; i++) {
     await sleep(4000);
     try {
       const r = await fetch(`${GRAPH}/${creationId}?fields=status_code&access_token=${token}`);
       const d = await r.json();
-      if (d.status_code === "FINISHED") return { ready: true };
-      if (d.status_code === "ERROR")    return { ready: false, error: "Instagram reportou erro" };
-    } catch { /* ignora */ }
+      if (d.status_code === "FINISHED") return { ready: true,  forced: false };
+      if (d.status_code === "ERROR")    return { ready: false, error: "Instagram reportou erro no processamento do vídeo" };
+      // IN_PROGRESS ou qualquer outro — continua aguardando
+    } catch { /* ignora erros de rede no polling */ }
   }
-  return { ready: false, error: "Timeout — vídeo ainda processando após 20s extras" };
+  // Timeout — tenta publicar mesmo assim (optimistic publish)
+  // O Instagram às vezes aceita o publish enquanto ainda mostra IN_PROGRESS
+  return { ready: true, forced: true };
 }
 
 export const handler = async (event) => {
@@ -72,11 +76,14 @@ export const handler = async (event) => {
       continue;
     }
 
-    // Poll final
+    // Poll final — se timeout, tenta publish mesmo assim (optimistic)
     const poll = await pollUntilReady(creation_id, token);
     if (!poll.ready) {
       results.push({ account_id, username: account?.username, success: false, error: poll.error });
       continue;
+    }
+    if (poll.forced) {
+      console.log(`[${account?.username}] Timeout no poll — tentando publish mesmo assim (optimistic)`);
     }
 
     // Publish
