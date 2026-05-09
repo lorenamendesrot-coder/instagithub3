@@ -68,7 +68,7 @@ async function runItem(item) {
       // Trata vídeos com pending: true — tenta media_publish separado após aguardar
       const pendingResults = results.filter((r) => r.pending && r.creation_id);
       if (pendingResults.length > 0) {
-        await sleep(15000); // aguarda mais 15s para o Instagram processar o vídeo
+        await sleep(25000); // aguarda 25s — Instagram leva tempo para processar vídeos
         const retryRes = await fetch(`${origin}/.netlify/functions/publish-finish`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
