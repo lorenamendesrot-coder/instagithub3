@@ -26,3 +26,12 @@
 
 [functions."catbox-proxy"]
   timeout = 26
+
+[functions."publish"]
+  timeout = 26
+
+[functions."sanitize-media"]
+  timeout = 26
+
+[functions."publish-finish"]
+  timeout = 26
