@@ -92,7 +92,7 @@ async function runItem(item) {
           caption:     item.caption || "",
           createdAt:   new Date().toISOString(),
           attempts:    0,
-          maxAttempts: 8,        // 8 × 20s ≈ 2.5 min de janela total
+          maxAttempts: 20,       // 20 × 45s ≈ 15 min de janela total
         });
         console.log(`[SW] video_finish criado → @${pr.username} historyId:${historyId}`);
       }
@@ -256,7 +256,7 @@ async function runVideoFinish(item) {
         notifyClients({ type: "QUEUE_UPDATE" });
       } else {
         // Ainda há tentativas — reagenda para 30s depois
-        await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + 30000 });
+        await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + 45000 });
       }
     }
 
@@ -266,7 +266,7 @@ async function runVideoFinish(item) {
       await updateItem(item.id, { status: "error", error: err.message });
       notifyClients({ type: "QUEUE_UPDATE" });
     } else {
-      await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + 20000 });
+      await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + 45000 });
     }
   }
 }
