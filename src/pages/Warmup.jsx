@@ -649,8 +649,20 @@ export default function Warmup() {
     const pending = (files[typeId] || []).filter((f) => f.status === "idle" || f.status === "error");
     if (!pending.length) return;
     setUploading(true);
-    for (const entry of pending) {
-      setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, status: "uploading", progress: 0, error: "", sanitizationReport: null } : f) }));
+
+    // Marca todos como "uploading" de uma vez
+    setFiles((prev) => ({
+      ...prev,
+      [typeId]: prev[typeId].map((f) =>
+        pending.find((p) => p.id === f.id)
+          ? { ...f, status: "uploading", progress: 0, error: "", sanitizationReport: null }
+          : f
+      ),
+    }));
+
+    // Upload paralelo — máximo 50 simultâneos
+    const CONCURRENCY = 50;
+    const uploadOne = async (entry) => {
       try {
         let sanitizationReport = null;
         const url = await uploadFile(
@@ -659,7 +671,6 @@ export default function Warmup() {
             setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, progress } : f) }));
           },
           (report) => {
-            // Salva o report de sanitização em tempo real conforme chega
             sanitizationReport = report;
             setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, sanitizationReport: report } : f) }));
           }
@@ -668,7 +679,13 @@ export default function Warmup() {
       } catch (err) {
         setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, status: "error", error: err.message } : f) }));
       }
+    };
+
+    // Processa em lotes de CONCURRENCY
+    for (let i = 0; i < pending.length; i += CONCURRENCY) {
+      await Promise.all(pending.slice(i, i + CONCURRENCY).map(uploadOne));
     }
+
     setUploading(false);
   }, [files]);
 
