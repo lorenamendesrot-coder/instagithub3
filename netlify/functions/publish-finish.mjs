@@ -24,22 +24,23 @@ async function getFreshToken(accountId) {
   }
 }
 
-// Poll até FINISHED — máximo 5×4s = 20s
-// Se não confirmar FINISHED, tenta o publish mesmo assim (Instagram frequentemente aceita)
+// Poll até FINISHED — máximo 4×5s = 20s (dentro do timeout de 26s do Netlify)
+// Se não FINISHED: retorna not_ready — o SW vai chamar de novo no próximo tick
 async function pollUntilReady(creationId, token) {
-  for (let i = 0; i < 5; i++) {
-    await sleep(4000);
+  for (let i = 0; i < 4; i++) {
+    await sleep(5000);
     try {
       const r = await fetch(`${GRAPH}/${creationId}?fields=status_code&access_token=${token}`);
       const d = await r.json();
-      if (d.status_code === "FINISHED") return { ready: true,  forced: false };
+      if (d.status_code === "FINISHED") return { ready: true, forced: false };
       if (d.status_code === "ERROR")    return { ready: false, error: "Instagram reportou erro no processamento do vídeo" };
-      // IN_PROGRESS ou qualquer outro — continua aguardando
-    } catch { /* ignora erros de rede no polling */ }
+      // IN_PROGRESS — continua o loop
+      console.log(`[publish-finish] ${creationId} ainda IN_PROGRESS (tentativa ${i+1}/4)`);
+    } catch { /* ignora erros de rede */ }
   }
-  // Timeout — tenta publicar mesmo assim (optimistic publish)
-  // O Instagram às vezes aceita o publish enquanto ainda mostra IN_PROGRESS
-  return { ready: true, forced: true };
+  // Não confirmou FINISHED dentro de 20s — retorna not_ready
+  // O SW vai reagendar para o próximo tick (não faz publish optimistic — reduz erros "Media ID not available")
+  return { ready: false, not_ready: true };
 }
 
 export const handler = async (event) => {
@@ -76,14 +77,19 @@ export const handler = async (event) => {
       continue;
     }
 
-    // Poll final — se timeout, tenta publish mesmo assim (optimistic)
+    // Poll — 4×5s = 20s máximo
     const poll = await pollUntilReady(creation_id, token);
+
+    if (poll.not_ready) {
+      // Vídeo ainda processando — retorna sem resultado para o SW reagendar
+      // O SW detecta results=[] e incrementa attempts até maxAttempts
+      console.log(`[${account?.username}] Vídeo ainda não pronto — SW vai tentar novamente`);
+      continue; // não adiciona em results — SW interpreta como "sem resultado ainda"
+    }
+
     if (!poll.ready) {
       results.push({ account_id, username: account?.username, success: false, error: poll.error });
       continue;
-    }
-    if (poll.forced) {
-      console.log(`[${account?.username}] Timeout no poll — tentando publish mesmo assim (optimistic)`);
     }
 
     // Publish
