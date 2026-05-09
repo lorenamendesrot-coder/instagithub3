@@ -259,7 +259,9 @@ export function sanitizeMedia(buf, mimeType) {
     if (mimeType === "image/jpeg" || mimeType === "image/jpg") return sanitizeJpeg(buf);
     if (mimeType === "image/png")  return sanitizePng(buf);
     if (mimeType === "image/webp") return sanitizeWebp(buf);
-    if (mimeType === "video/mp4" || mimeType === "video/quicktime") return sanitizeMp4(buf);
+    // sanitizeMp4 REMOVIDO — modificar estrutura do moov corrompia o arquivo
+    // Para MP4: apenas passa o buffer original sem alteração estrutural
+    if (mimeType === "video/mp4" || mimeType === "video/quicktime") return buf;
     if (mimeType === "video/webm") return sanitizeWebm(buf);
     return Buffer.concat([buf, randomBytes(32)]);
   } catch { return buf; }
@@ -271,9 +273,10 @@ export function sanitizeMedia(buf, mimeType) {
 export function varyMediaForAccount(buf, mimeType) {
   try {
     if (mimeType === "video/mp4" || mimeType === "video/quicktime") {
+      // overlayNoiseMp4 REMOVIDO — corrompia frames e impedia processamento no Instagram
+      // Apenas variações seguras: timestamps no mvhd e átomo free com bytes aleatórios
       let result = varyMp4Timestamps(buf);
       result = varyMp4EditList(result);
-      result = overlayNoiseMp4(result);
       return result;
     }
     if (mimeType === "image/jpeg" || mimeType === "image/jpg") return sanitizeJpeg(buf);
