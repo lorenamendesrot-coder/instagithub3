@@ -334,48 +334,8 @@ function MediaUploadZone({ typeConfig, files, onAddFiles, onRemoveFile, onUpload
                 <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{f.name}</div>
                 <div style={{ fontSize: 10, color: "var(--muted)" }}>{fmtSize(f.size)}</div>
                 {f.status === "uploading" && (
-                  <div style={{ marginTop: 4 }}>
-                    {/* Barra de sanitização */}
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 1 }}>
-                      <span style={{ fontSize: 9, color: (f.sanitizeProgress || 0) >= 100 ? "var(--success)" : "var(--warning)" }}>
-                        🔒 Sanitização
-                      </span>
-                      <span style={{ fontSize: 9, color: (f.sanitizeProgress || 0) >= 100 ? "var(--success)" : "var(--warning)", fontWeight: 700 }}>
-                        {(f.sanitizeProgress || 0) >= 100 ? "✓" : `${f.sanitizeProgress || 0}%`}
-                      </span>
-                    </div>
-                    <div style={{ height: 2, background: "var(--border)", borderRadius: 1, overflow: "hidden", marginBottom: 3 }}>
-                      <div style={{ height: "100%", width: `${f.sanitizeProgress || 0}%`, background: (f.sanitizeProgress || 0) >= 100 ? "var(--success)" : "var(--warning)", transition: "width 0.3s" }} />
-                    </div>
-                    {/* Barra de upload */}
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 1 }}>
-                      <span style={{ fontSize: 9, color: f.progress >= 100 ? "var(--success)" : "var(--accent-light)" }}>☁️ Upload</span>
-                      <span style={{ fontSize: 9, color: f.progress >= 100 ? "var(--success)" : "var(--accent-light)", fontWeight: 700 }}>
-                        {f.progress >= 18 ? `${f.progress}%` : "Aguardando..."}
-                      </span>
-                    </div>
-                    <div style={{ height: 2, background: "var(--border)", borderRadius: 1, overflow: "hidden" }}>
-                      <div style={{ height: "100%", width: `${Math.max(0, f.progress - 18)}%`, background: f.progress >= 100 ? "var(--success)" : "var(--accent)", transition: "width 0.3s" }} />
-                    </div>
-                  </div>
-                )}
-                {/* Badge sanitização + metadados após concluído */}
-                {f.status === "done" && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 3, flexWrap: "wrap" }}>
-                    {f.sanitizationReport && !f.sanitizationReport.error ? (
-                      <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "rgba(34,197,94,0.1)", color: "var(--success)", border: "1px solid rgba(34,197,94,0.2)" }}>
-                        ✅ Sanitizado · ID:{f.sanitizationReport.uniqueId}
-                      </span>
-                    ) : f.sanitizationReport?.error ? (
-                      <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "rgba(245,158,11,0.1)", color: "var(--warning)", border: "1px solid rgba(245,158,11,0.2)" }}>
-                        ⚠ Sanitização parcial
-                      </span>
-                    ) : null}
-                    {f.sanitizationReport && !f.sanitizationReport.error && (
-                      <span style={{ fontSize: 9, color: "var(--muted)" }}>
-                        {(f.sanitizationReport.originalSize / 1024).toFixed(0)}KB→{(f.sanitizationReport.sanitizedSize / 1024).toFixed(0)}KB · {f.sanitizationReport.durationMs}ms
-                      </span>
-                    )}
+                  <div style={{ marginTop: 3, height: 2, background: "var(--border)", borderRadius: 1, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${f.progress}%`, background: "var(--accent)", transition: "width 0.3s" }} />
                   </div>
                 )}
                 {f.status === "error" && <div style={{ fontSize: 10, color: "var(--danger)", marginTop: 2 }}>✗ {f.error}</div>}
@@ -478,7 +438,7 @@ function AccountMonitorCard({ acc, queueItems }) {
 // ─── Componente Principal ─────────────────────────────────────────────────────
 
 export default function Warmup() {
-  const { accounts } = useAccounts();
+  const { accounts, addAccounts, reloadAccounts } = useAccounts();
 
   const [files,        setFiles]        = useState({ reels: [], feed: [], stories: [] });
   const [uploading,    setUploading]    = useState(false);
@@ -495,6 +455,45 @@ export default function Warmup() {
   const [saved,        setSaved]        = useState(false);
   const [dbQueue,      setDbQueue]      = useState([]);
   const [tab,          setTab]          = useState("upload");
+  const [syncingNames, setSyncingNames] = useState(false);
+  const [syncResult,   setSyncResult]   = useState(null); // { updated: n, total: n }
+
+  // Sincroniza username/foto de todas as contas elegíveis via account-insights
+  const syncUsernames = useCallback(async () => {
+    if (syncingNames || eligibleAccounts.length === 0) return;
+    setSyncingNames(true);
+    setSyncResult(null);
+    let updated = 0;
+
+    for (const acc of eligibleAccounts) {
+      if (!acc.access_token) continue;
+      try {
+        const res  = await fetch("/api/account-insights", {
+          method:  "POST",
+          headers: { "Content-Type": "application/json" },
+          body:    JSON.stringify({ instagram_id: acc.id, access_token: acc.access_token }),
+        });
+        const json = await res.json();
+        if (res.ok && !json.error && json.username) {
+          const changed = json.username !== acc.username || json.profile_picture !== acc.profile_picture;
+          if (changed) {
+            await addAccounts([{
+              ...acc,
+              username:        json.username,
+              name:            json.name            || acc.name,
+              profile_picture: json.profile_picture || acc.profile_picture,
+              followers_count: json.followers_count ?? acc.followers_count,
+            }]);
+            updated++;
+          }
+        }
+      } catch { /* ignora falhas individuais */ }
+    }
+
+    await reloadAccounts();
+    setSyncResult({ updated, total: eligibleAccounts.length });
+    setSyncingNames(false);
+  }, [syncingNames, eligibleAccounts, addAccounts, reloadAccounts]);
 
   // Contas que passam no filtro de dias
   const eligibleAccounts = useMemo(
@@ -570,39 +569,14 @@ export default function Warmup() {
     if (!pending.length) return;
     setUploading(true);
     for (const entry of pending) {
-      // Resetar estado — incluindo sanitizeProgress separado
-      setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) =>
-        f.id === entry.id
-          ? { ...f, status: "uploading", progress: 0, sanitizeProgress: 0, error: "", sanitizationReport: null }
-          : f
-      )}));
+      setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, status: "uploading", progress: 0, error: "" } : f) }));
       try {
-        const url = await uploadFile(
-          entry.file,
-          // onProgress — progresso geral de upload (18–100%)
-          (progress) => {
-            setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) =>
-              f.id === entry.id ? { ...f, progress } : f
-            )}));
-          },
-          // onSanitized — salva o relatório de sanitização assim que termina
-          (report) => {
-            setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) =>
-              f.id === entry.id
-                ? { ...f, sanitizationReport: report, sanitizeProgress: 100 }
-                : f
-            )}));
-          },
-        );
-        setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) =>
-          f.id === entry.id
-            ? { ...f, status: "done", url, progress: 100, sanitizeProgress: 100 }
-            : f
-        )}));
+        const url = await uploadFile(entry.file, (progress) => {
+          setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, progress } : f) }));
+        });
+        setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, status: "done", url, progress: 100 } : f) }));
       } catch (err) {
-        setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) =>
-          f.id === entry.id ? { ...f, status: "error", error: err.message } : f
-        )}));
+        setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, status: "error", error: err.message } : f) }));
       }
     }
     setUploading(false);
@@ -840,7 +814,36 @@ export default function Warmup() {
 
           {/* Seleção de contas */}
           <div className="card">
-            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 12 }}>👥 Contas para Aquecimento</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <div style={{ fontWeight: 600, fontSize: 13 }}>👥 Contas para Aquecimento</div>
+              <button
+                className="btn btn-ghost btn-xs"
+                onClick={syncUsernames}
+                disabled={syncingNames || eligibleAccounts.length === 0}
+                title="Atualizar usernames e fotos das contas via Meta API"
+                style={{ display: "flex", alignItems: "center", gap: 5 }}
+              >
+                {syncingNames
+                  ? <><span className="spinner" style={{ width: 11, height: 11 }} /> Sincronizando...</>
+                  : "↻ Sincronizar nomes"}
+              </button>
+            </div>
+
+            {/* Resultado da sincronização */}
+            {syncResult && (
+              <div style={{
+                marginBottom: 10, padding: "6px 12px", borderRadius: 7, fontSize: 11,
+                background: syncResult.updated > 0 ? "rgba(34,197,94,0.08)" : "var(--bg3)",
+                border: `1px solid ${syncResult.updated > 0 ? "rgba(34,197,94,0.25)" : "var(--border)"}`,
+                color: syncResult.updated > 0 ? "var(--success)" : "var(--muted)",
+                display: "flex", alignItems: "center", gap: 6,
+              }}>
+                {syncResult.updated > 0
+                  ? `✓ ${syncResult.updated} conta(s) atualizada(s) de ${syncResult.total}`
+                  : `✓ Todos os usernames já estão atualizados (${syncResult.total} conta(s))`}
+                <button onClick={() => setSyncResult(null)} style={{ marginLeft: "auto", background: "none", border: "none", color: "var(--muted)", cursor: "pointer", fontSize: 13, padding: 0, lineHeight: 1 }}>×</button>
+              </div>
+            )}
             <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", textTransform: "none", letterSpacing: 0, fontSize: 13, color: "var(--text)", marginBottom: 12 }}>
               <input
                 type="checkbox"
@@ -898,6 +901,14 @@ export default function Warmup() {
                           transition: "all 0.12s",
                         }}>
                           {isSelected && <span style={{ color: "#fff", fontSize: 10, fontWeight: 900, lineHeight: 1 }}>✓</span>}
+                        </div>
+                        {/* Avatar com foto ou inicial */}
+                        <div style={{ width: 24, height: 24, borderRadius: "50%", flexShrink: 0, overflow: "hidden", border: "1px solid var(--border2)" }}>
+                          {acc.profile_picture
+                            ? <img src={acc.profile_picture} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} />
+                            : <div style={{ width: "100%", height: "100%", background: "linear-gradient(135deg, var(--accent), #9b4dfc)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: "#fff" }}>
+                                {(acc.username || "?")[0].toUpperCase()}
+                              </div>}
                         </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>@{acc.username}</div>
