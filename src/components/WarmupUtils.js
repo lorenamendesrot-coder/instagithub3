@@ -12,35 +12,38 @@ export const WARMUP_PRESET_2D = {
     {
       day: 1,
       label: "Dia 1 — Arranque Suave",
-      reels:   3,
-      feed:    1,
-      stories: 2,
+      reels:   10,
+      feed:    0,
+      stories: 0,
       windowStart: "09:00",
       windowEnd:   "21:30",
-      intervalMinMin: 90,
-      intervalMinMax: 150,
+      intervalMinMin: 60,
+      intervalMinMax: 75,
+      jitterMin: 8,
     },
     {
       day: 2,
       label: "Dia 2 — Aceleração",
-      reels:   5,
-      feed:    2,
-      stories: 3,
+      reels:   20,
+      feed:    0,
+      stories: 0,
       windowStart: "09:00",
       windowEnd:   "21:30",
       intervalMinMin: 60,
-      intervalMinMax: 120,
+      intervalMinMax: 75,
+      jitterMin: 8,
     },
     {
       day: 3,
       label: "Dia 3 — Manutenção de Nível",
-      reels:   4,
-      feed:    2,
-      stories: 3,
+      reels:   30,
+      feed:    0,
+      stories: 0,
       windowStart: "09:00",
       windowEnd:   "21:30",
-      intervalMinMin: 70,
-      intervalMinMax: 130,
+      intervalMinMin: 60,
+      intervalMinMax: 75,
+      jitterMin: 8,
     },
   ],
 };
@@ -144,35 +147,31 @@ export function timeToMs(dateBase, timeStr) {
 export function generateSlotTimes(dayBase, count, plan) {
   const windowStart = timeToMs(dayBase, plan.windowStart);
   const windowEnd   = timeToMs(dayBase, plan.windowEnd);
-  const windowMs    = windowEnd - windowStart;
+
+  // Intervalo base aleatório entre min e max (distribui os posts na janela)
+  const intervalMin = plan.intervalMinMin * 60 * 1000;
+  const intervalMax = (plan.intervalMinMax || plan.intervalMinMin) * 60 * 1000;
+
+  // Jitter em minutos específico do preset (±N min) + segundos aleatórios
+  const jM = plan.jitterMin ?? 10; // fallback 10min se não definido
+  const jitterMinRange = [-jM, jM];
+
   const times = [];
-
-  if (count <= 0) return times;
-
-  if (count === 1) {
-    // Posto único: coloca no meio da janela com leve jitter
-    const mid = new Date(windowStart + windowMs / 2);
-    const jittered = addJitter(mid, [-10, 10], JITTER_SEC_RANGE);
-    times.push(new Date(Math.min(Math.max(jittered.getTime(), windowStart), windowEnd)));
-    return times;
-  }
-
-  // Intervalo mínimo configurado
-  const minGapMs = (plan.intervalMinMin || 30) * 60 * 1000;
-
-  // Calcula o intervalo ideal para distribuir count posts na janela
-  // Usa count-1 intervalos para ir do início ao fim
-  const idealIntervalMs = Math.floor(windowMs / (count - 1));
-  // Respeita o mínimo configurado
-  const intervalMs = Math.max(idealIntervalMs, minGapMs);
+  let cursor = windowStart;
 
   for (let i = 0; i < count; i++) {
-    const base     = new Date(windowStart + i * intervalMs);
-    // Para com elegância se ultrapassar a janela
-    if (base.getTime() > windowEnd + 60000) break;
-    const jittered = addJitter(base, JITTER_MIN_RANGE, JITTER_SEC_RANGE);
-    const final    = new Date(Math.min(Math.max(jittered.getTime(), windowStart), windowEnd));
+    // Intervalo aleatório entre min e max para cada slot
+    const randInterval = intervalMin + Math.random() * (intervalMax - intervalMin);
+    const base = i === 0 ? new Date(cursor) : new Date(cursor + randInterval);
+    cursor = base.getTime();
+
+    if (cursor > windowEnd) break;
+
+    // Aplica jitter de minutos e segundos aleatórios
+    const jittered = addJitter(base, jitterMinRange, JITTER_SEC_RANGE);
+    const final = new Date(Math.min(Math.max(jittered.getTime(), windowStart), windowEnd));
     times.push(final);
+    cursor = final.getTime(); // avança o cursor para o slot atual
   }
   return times;
 }
@@ -237,7 +236,7 @@ export function buildWarmupQueue({ accounts, mediaByType, captions, captionMode,
             caption,
             bulkCaptions:  captions,
             captionMode,
-            accounts:      [{ id: acc.id, username: acc.username, access_token: acc.access_token }],
+            accounts:      [{ id: acc.id, username: acc.username }],
             scheduledAt:   scheduledDate.getTime(),
             scheduledDay:  dayPlan.day,
             status:        "pending",
