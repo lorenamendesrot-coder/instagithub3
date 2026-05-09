@@ -121,7 +121,7 @@ function SchedulerProvider({ addEntry, children }) {
             if (attempts >= (vf.maxAttempts || 20)) {
               await dbPut("queue", { ...vf, status: "error", error: "Timeout: vídeo não processou" });
             } else {
-              await dbPut("queue", { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 45000 });
+              await dbPut("queue", { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 20000 });
             }
           }
         } catch (err) {
@@ -129,7 +129,7 @@ function SchedulerProvider({ addEntry, children }) {
           if (attempts >= (vf.maxAttempts || 20)) {
             await dbPut("queue", { ...vf, status: "error", error: err.message });
           } else {
-            await dbPut("queue", { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 45000 });
+            await dbPut("queue", { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 20000 });
           }
         }
         runningRef.current.delete(vf.id);
@@ -201,7 +201,7 @@ function SchedulerProvider({ addEntry, children }) {
                 account_id:  pr.account_id,
                 username:    pr.username || pr.account_id,
                 accounts:    item.accounts,
-                scheduledAt: Date.now() + 60000,
+                scheduledAt: Date.now() + 30000,
                 historyId,
                 mediaUrl,
                 postType:    item.postType,
