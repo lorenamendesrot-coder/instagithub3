@@ -458,7 +458,32 @@ export default function Warmup() {
   const [syncingNames, setSyncingNames] = useState(false);
   const [syncResult,   setSyncResult]   = useState(null); // { updated: n, total: n }
 
+  // Contas que passam no filtro de dias
+  const eligibleAccounts = useMemo(
+    () => accounts.filter((a) => !useNewOnly || isNewAccount(a)),
+    [accounts, useNewOnly]
+  );
+
+  // Contas efetivamente selecionadas para o aquecimento (null = todas elegíveis)
+  const selectedAccounts = useMemo(
+    () => selectedAccIds === null
+      ? eligibleAccounts
+      : eligibleAccounts.filter((a) => selectedAccIds.includes(a.id)),
+    [eligibleAccounts, selectedAccIds]
+  );
+
+  // Helpers de seleção
+  const toggleAccount = (id) => {
+    setSelectedAccIds((prev) => {
+      const base = prev === null ? eligibleAccounts.map((a) => a.id) : [...prev];
+      return base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
+    });
+  };
+  const selectAll  = () => setSelectedAccIds(null);
+  const selectNone = () => setSelectedAccIds([]);
+
   // Sincroniza username/foto de todas as contas elegíveis via account-insights
+  // NOTA: definida APÓS eligibleAccounts para evitar referência antes da inicialização
   const syncUsernames = useCallback(async () => {
     if (syncingNames || eligibleAccounts.length === 0) return;
     setSyncingNames(true);
@@ -495,30 +520,6 @@ export default function Warmup() {
     setSyncingNames(false);
   }, [syncingNames, eligibleAccounts, addAccounts, reloadAccounts]);
 
-  // Contas que passam no filtro de dias
-  const eligibleAccounts = useMemo(
-    () => accounts.filter((a) => !useNewOnly || isNewAccount(a)),
-    [accounts, useNewOnly]
-  );
-
-  // Contas efetivamente selecionadas para o aquecimento (null = todas elegíveis)
-  const selectedAccounts = useMemo(
-    () => selectedAccIds === null
-      ? eligibleAccounts
-      : eligibleAccounts.filter((a) => selectedAccIds.includes(a.id)),
-    [eligibleAccounts, selectedAccIds]
-  );
-
-  // Helpers de seleção
-  const toggleAccount = (id) => {
-    setSelectedAccIds((prev) => {
-      const base = prev === null ? eligibleAccounts.map((a) => a.id) : [...prev];
-      return base.includes(id) ? base.filter((x) => x !== id) : [...base, id];
-    });
-  };
-  const selectAll  = () => setSelectedAccIds(null);
-  const selectNone = () => setSelectedAccIds([]);
-
   useEffect(() => {
     if (tab === "monitor") {
       dbGetAll("queue").then((q) => setDbQueue(q.filter((x) => x.warmup)));
@@ -548,7 +549,7 @@ export default function Warmup() {
         name,
         size:     0,
         status:   "done",   // já está pronta — não precisa de upload
-        sanitizationReport: item.sanitizationReport || null,
+        sanitizationReport: null,
         progress: 100,
         url,
         error:    "",
