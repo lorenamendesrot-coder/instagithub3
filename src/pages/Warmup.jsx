@@ -325,7 +325,33 @@ function MediaUploadZone({ typeConfig, files, onAddFiles, onRemoveFile, onUpload
           {myFiles.map((f) => {
             const rep  = f.sanitizationReport;
             const sanitOk = rep && rep.supported !== false;
-            const cleaned = sanitOk ? (rep.removed || []).filter((r) => !r.startsWith("injeção")) : [];
+            // Mapa de nomes técnicos → legível para o usuário
+            const ATOM_NAMES = {
+              "free":           "espaço livre",
+              "udta":           "metadados do usuário",
+              "meta":           "metadados",
+              "©nam":           "título",
+              "©art":           "artista",
+              "©day":           "data de criação",
+              "©too":           "encoder",
+              "©cmt":           "comentário",
+              "©alb":           "álbum",
+              "©gen":           "gênero",
+              "desc":           "descrição",
+              "cprt":           "copyright",
+              "EXIF/XMP (APP1)":"EXIF/XMP",
+              "IPTC (APP13)":   "IPTC",
+              "tEXt":           "texto PNG",
+              "iTXt":           "texto internacionalizado PNG",
+              "zTXt":           "texto comprimido PNG",
+              "eXIf":           "EXIF PNG",
+              "iCCP":           "perfil de cor ICC",
+              "tIME":           "data de modificação",
+              "EXIF":           "EXIF",
+              "XMP ":           "XMP",
+            };
+            const friendlyName = (r) => ATOM_NAMES[r] || r;
+            const cleaned = sanitOk ? (rep.removed || []).filter((r) => !r.startsWith("injeção")).map(friendlyName) : [];
 
             return (
               <div key={f.id} style={{
