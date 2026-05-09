@@ -438,8 +438,9 @@ function AccountMonitorCard({ acc, queueItems }) {
     <div style={{ padding: "16px 18px", borderRadius: 12, background: riskStyle.bg, border: `1px solid ${riskStyle.border}` }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 700 }}>@{acc.username}</div>
-          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+          <div style={{ fontSize: 13, fontWeight: 700 }}>{acc.nickname || acc.name || `@${acc.username}`}</div>
+          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 1 }}>@{acc.username}</div>
+          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 1 }}>
             {isNewAccount(acc) ? `🔥 Conta nova — Dia ${day} de aquecimento` : `Conta ativa — Dia ${day}`}
           </div>
         </div>
@@ -968,12 +969,14 @@ export default function Warmup() {
                           {acc.profile_picture
                             ? <img src={acc.profile_picture} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} />
                             : <div style={{ width: "100%", height: "100%", background: "linear-gradient(135deg, var(--accent), #9b4dfc)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: "#fff" }}>
-                                {(acc.username || "?")[0].toUpperCase()}
+                                {(acc.nickname || acc.name || acc.username || "?")[0].toUpperCase()}
                               </div>}
                         </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>@{acc.username}</div>
-                          <div style={{ fontSize: 10, color: "var(--muted)" }}>Dia {day}</div>
+                          <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {acc.nickname || acc.name || `@${acc.username}`}
+                          </div>
+                          <div style={{ fontSize: 10, color: "var(--muted)" }}>@{acc.username} · Dia {day}</div>
                         </div>
                         <div style={{ width: 7, height: 7, borderRadius: "50%", background: isNewAccount(acc) ? "var(--success)" : "var(--muted)", flexShrink: 0 }} />
                       </div>
