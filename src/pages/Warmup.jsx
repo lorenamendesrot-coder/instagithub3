@@ -620,8 +620,20 @@ export default function Warmup() {
           {/* Config por dia — mostra apenas os dias selecionados */}
           {dayConfig.filter((d) => selectedDays.includes(d.day)).map((dayPlan, dayIdx) => (
             <div key={dayPlan.day} className="card">
-              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 14, color: "var(--accent-light)" }}>
-                📅 {dayPlan.label}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, color: "var(--accent-light)" }}>
+                  📅 {dayPlan.label}
+                </div>
+                <button
+                  className="btn btn-ghost btn-xs"
+                  onClick={() => {
+                    const def = WARMUP_PRESET_2D.days.find((d) => d.day === dayPlan.day);
+                    if (def) setDayConfig((prev) => prev.map((d) => d.day === dayPlan.day ? { ...def } : d));
+                  }}
+                  title="Restaurar valores padrão deste dia"
+                >
+                  ↺ Padrão
+                </button>
               </div>
 
               <div style={{ marginBottom: 14 }}>
@@ -654,51 +666,57 @@ export default function Warmup() {
                 <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
                   ⏱ Ritmo de postagem
                 </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-                  {[
-                    { label: "1h em 1h",  min: 60,  max: 75,  jitter: 8  },
-                    { label: "2h em 2h",  min: 120, max: 140, jitter: 12 },
-                    { label: "3h em 3h",  min: 180, max: 205, jitter: 15 },
-                    { label: "4h em 4h",  min: 240, max: 265, jitter: 18 },
-                    { label: "6h em 6h",  min: 360, max: 390, jitter: 20 },
-                  ].map(({ label, min, max, jitter }) => {
-                    const active = dayPlan.intervalMinMin === min && dayPlan.intervalMinMax === max;
-                    return (
-                      <button
-                        key={label}
-                        onClick={() => {
-                          updateDayConfig(dayPlan.day, "intervalMinMin", min);
-                          updateDayConfig(dayPlan.day, "intervalMinMax", max);
-                          updateDayConfig(dayPlan.day, "jitterMin",      jitter);
-                        }}
-                        style={{
-                          padding: "6px 12px", borderRadius: 20, fontSize: 12, cursor: "pointer",
-                          fontWeight: active ? 700 : 400, border: "none",
-                          background: active ? "var(--accent)" : "var(--bg3)",
-                          color: active ? "#fff" : "var(--muted)",
-                          border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
-                          transition: "all 0.12s",
-                        }}
-                      >
-                        {label}
-                        {active && <span style={{ marginLeft: 4, fontSize: 10, opacity: 0.8 }}>✓</span>}
+                {(() => {
+                  const PRESETS = [
+                    { label: "1h em 1h", min: 60,  max: 75,  jitter: 8  },
+                    { label: "2h em 2h", min: 120, max: 140, jitter: 12 },
+                    { label: "3h em 3h", min: 180, max: 205, jitter: 15 },
+                    { label: "4h em 4h", min: 240, max: 265, jitter: 18 },
+                    { label: "6h em 6h", min: 360, max: 390, jitter: 20 },
+                  ];
+                  const activePreset = PRESETS.find(
+                    (p) => p.min === dayPlan.intervalMinMin && p.max === dayPlan.intervalMinMax
+                  );
+                  const isCustom = !activePreset;
+                  return (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                      {PRESETS.map(({ label, min, max, jitter }) => {
+                        const active = activePreset?.min === min;
+                        return (
+                          <button key={label} onClick={() => {
+                            updateDayConfig(dayPlan.day, "intervalMinMin", min);
+                            updateDayConfig(dayPlan.day, "intervalMinMax", max);
+                            updateDayConfig(dayPlan.day, "jitterMin", jitter);
+                          }} style={{
+                            padding: "6px 14px", borderRadius: 20, fontSize: 12, cursor: "pointer",
+                            fontWeight: active ? 700 : 400,
+                            background: active ? "var(--accent)" : "var(--bg3)",
+                            color: active ? "#fff" : "var(--muted)",
+                            border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
+                            transition: "all 0.12s",
+                          }}>
+                            {active ? `✓ ${label}` : label}
+                          </button>
+                        );
+                      })}
+                      <button onClick={() => {
+                        // Entra em modo personalizado limpando qualquer preset ativo
+                        updateDayConfig(dayPlan.day, "intervalMinMin", 45);
+                        updateDayConfig(dayPlan.day, "intervalMinMax", 90);
+                        updateDayConfig(dayPlan.day, "jitterMin", 5);
+                      }} style={{
+                        padding: "6px 12px", borderRadius: 20, fontSize: 12, cursor: "pointer",
+                        fontWeight: isCustom ? 700 : 400,
+                        background: isCustom ? "rgba(245,158,11,0.15)" : "var(--bg3)",
+                        color: isCustom ? "var(--warning)" : "var(--muted)",
+                        border: `1px solid ${isCustom ? "rgba(245,158,11,0.4)" : "var(--border)"}`,
+                        transition: "all 0.12s",
+                      }}>
+                        {isCustom ? "✓ Personalizado" : "✏️ Personalizado"}
                       </button>
-                    );
-                  })}
-                  <button
-                    onClick={() => {
-                      updateDayConfig(dayPlan.day, "intervalMinMin", dayPlan.intervalMinMin);
-                      updateDayConfig(dayPlan.day, "intervalMinMax", dayPlan.intervalMinMax);
-                    }}
-                    style={{
-                      padding: "6px 10px", borderRadius: 20, fontSize: 11, cursor: "pointer",
-                      background: "transparent", border: "1px dashed var(--border2)",
-                      color: "var(--muted)",
-                    }}
-                  >
-                    ✏️ Personalizado
-                  </button>
-                </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Inputs de janela + intervalo personalizado */}
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
