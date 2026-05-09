@@ -1,7 +1,10 @@
 // Service Worker — Insta Manager Scheduler v5 (com suporte a mediaUrls por ciclo)
 const TICK_INTERVAL = 20000;
 
-self.addEventListener("install", () => self.skipWaiting());
+self.addEventListener("install", (e) => {
+  // skipWaiting imediato garante que novo SW substitui versão antiga em cache
+  e.waitUntil(self.skipWaiting());
+});
 self.addEventListener("activate", (e) => {
   e.waitUntil(self.clients.claim());
   startTicker();
@@ -140,16 +143,41 @@ async function runItem(item) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// DB version deve ser SEMPRE igual ao useDB.js — atualmente v5
+const SW_DB_VERSION = 5;
+let _db = null;
+
 function openDB() {
+  if (_db) return Promise.resolve(_db);
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open("insta_manager", 4);
+    const req = indexedDB.open("insta_manager", SW_DB_VERSION);
     req.onupgradeneeded = (e) => {
       const db = e.target.result;
-      if (!db.objectStoreNames.contains("queue")) db.createObjectStore("queue", { keyPath: "id" });
-      if (!db.objectStoreNames.contains("history")) db.createObjectStore("history", { keyPath: "id" });
+      if (!db.objectStoreNames.contains("queue")) {
+        db.createObjectStore("queue", { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains("history")) {
+        const hs = db.createObjectStore("history", { keyPath: "id" });
+        try { hs.createIndex("created_at", "created_at", { unique: false }); } catch(_){}
+      }
+      if (!db.objectStoreNames.contains("sessions")) {
+        db.createObjectStore("sessions", { keyPath: "id" });
+      }
+      if (!db.objectStoreNames.contains("protection")) {
+        db.createObjectStore("protection", { keyPath: "id" });
+      }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      _db = req.result;
+      _db.onclose = () => { _db = null; };
+      _db.onerror = () => { _db = null; };
+      resolve(_db);
+    };
     req.onerror = () => reject(req.error);
+    req.onblocked = () => {
+      // Outra aba com versão antiga aberta — avisa e aguarda
+      console.warn("[SW] IDB bloqueado por outra aba. Aguardando...");
+    };
   });
 }
 
