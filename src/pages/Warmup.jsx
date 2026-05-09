@@ -321,180 +321,93 @@ function MediaUploadZone({ typeConfig, files, onAddFiles, onRemoveFile, onUpload
       )}
 
       {myFiles.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 180, overflowY: "auto", marginBottom: 6 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 3, maxHeight: 200, overflowY: "auto", marginBottom: 6 }}>
           {myFiles.map((f) => {
-            const rep = f.sanitizationReport;
-            // report.supported === false → formato não reconhecido (passa sem alterar)
-            // rep com removed[] → ok
-            const sanitOk      = rep && rep.supported !== false;
-            const sanitSkipped = rep && rep.supported === false;
-
-            // Campos removidos reais (ex: "EXIF/XMP (APP1)", "udta", ...)
-            // filtra as entradas de "injeção" para mostrar só o que foi limpo
-            const cleaned = sanitOk
-              ? (rep.removed || []).filter((r) => !r.startsWith("injeção"))
-              : [];
-            const injected = sanitOk
-              ? (rep.removed || []).filter((r) => r.startsWith("injeção"))
-              : [];
+            const rep  = f.sanitizationReport;
+            const sanitOk = rep && rep.supported !== false;
+            const cleaned = sanitOk ? (rep.removed || []).filter((r) => !r.startsWith("injeção")) : [];
 
             return (
               <div key={f.id} style={{
-                borderRadius: 8, fontSize: 11, overflow: "hidden",
+                display: "flex", alignItems: "center", gap: 8,
+                padding: "6px 10px", borderRadius: 7, fontSize: 11,
+                background: f.status === "done"  ? "rgba(34,197,94,0.05)"
+                          : f.status === "error" ? "rgba(239,68,68,0.05)" : "var(--bg4)",
                 border: `1px solid ${
-                  f.status === "done"  ? "rgba(34,197,94,0.2)"  :
-                  f.status === "error" ? "rgba(239,68,68,0.2)"  : "var(--border)"}`,
-                background: f.status === "done"  ? "rgba(34,197,94,0.04)"  :
-                            f.status === "error" ? "rgba(239,68,68,0.04)"  : "var(--bg4)",
+                  f.status === "done"  ? "rgba(34,197,94,0.18)"
+                : f.status === "error" ? "rgba(239,68,68,0.18)" : "var(--border)"}`,
               }}>
+                {/* Ícone */}
+                <span style={{ fontSize: 13, flexShrink: 0 }}>{f.fromUrl ? "🔗" : typeConfig.icon}</span>
 
-                {/* ── Linha principal ── */}
-                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px" }}>
-                  <span style={{ fontSize: 13 }}>{f.fromUrl ? "🔗" : typeConfig.icon}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>
-                      {f.sanitizationReport?.sanitizedName || f.name}
-                    </div>
-                    <div style={{ fontSize: 10, color: "var(--muted)" }}>
-                      {f.fromUrl ? "via URL" : fmtSize(f.size)}
-                      {rep && sanitOk && rep.durationMs && ` · sanitizado em ${rep.durationMs}ms`}
-                    </div>
+                {/* Info principal */}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>
+                    {f.name}
+                  </div>
+
+                  {/* Sub-linha: tamanho + sanitização inline */}
+                  <div style={{ fontSize: 10, color: "var(--muted)", display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", marginTop: 1 }}>
+                    <span>{f.fromUrl ? "via URL" : fmtSize(f.size)}</span>
+
+                    {/* Durante upload */}
+                    {f.status === "uploading" && !rep && (
+                      <>
+                        <span>·</span>
+                        <span className="spinner" style={{ width: 8, height: 8 }} />
+                        <span>{f.progress < 18 ? "sanitizando..." : "enviando..."}</span>
+                      </>
+                    )}
+
+                    {/* Resultado da sanitização — compacto */}
+                    {rep && sanitOk && (
+                      <>
+                        <span>·</span>
+                        <span style={{ color: "var(--success)" }}>🛡</span>
+                        {cleaned.length > 0
+                          ? <span style={{ color: "var(--success)" }}>{cleaned.join(", ")} removido{cleaned.length > 1 ? "s" : ""}</span>
+                          : <span style={{ color: "var(--success)" }}>limpo</span>}
+                        {rep.uniqueId && (
+                          <span style={{ fontFamily: "monospace", fontSize: 9, color: "var(--muted)" }}>#{rep.uniqueId.slice(0, 8)}</span>
+                        )}
+                      </>
+                    )}
+                    {rep && !sanitOk && (
+                      <>
+                        <span>·</span>
+                        <span style={{ color: "var(--warning)" }}>○ formato não suportado</span>
+                      </>
+                    )}
+
                     {/* Barra de progresso */}
                     {f.status === "uploading" && (
-                      <div style={{ marginTop: 3, height: 2, background: "var(--border)", borderRadius: 1, overflow: "hidden" }}>
+                      <div style={{ width: "100%", height: 2, background: "var(--border)", borderRadius: 1, overflow: "hidden", marginTop: 2 }}>
                         <div style={{
                           height: "100%", width: `${f.progress}%`,
                           background: f.progress < 18 ? "var(--warning)" : "var(--accent)",
-                          transition: "width 0.4s",
+                          transition: "width 0.35s",
                         }} />
                       </div>
                     )}
+
                     {f.status === "error" && (
-                      <div style={{ fontSize: 10, color: "var(--danger)", marginTop: 2 }}>✗ {f.error}</div>
+                      <span style={{ color: "var(--danger)" }}>✗ {f.error}</span>
                     )}
                   </div>
-
-                  {/* Status badges */}
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3, flexShrink: 0 }}>
-                    {f.status === "idle"      && <span className="badge badge-gray"    style={{ fontSize: 10 }}>Pendente</span>}
-                    {f.status === "uploading" && <span className="spinner" style={{ width: 12, height: 12 }} />}
-                    {f.status === "done"      && <span className="badge badge-success" style={{ fontSize: 10 }}>✓ Enviado</span>}
-                    {f.status === "error"     && <span className="badge badge-danger"  style={{ fontSize: 10 }}>Erro</span>}
-                    {/* Badge de formato */}
-                    {rep && rep.format && rep.format !== "unknown" && (
-                      <span style={{ fontSize: 9, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                        {rep.format}
-                      </span>
-                    )}
-                  </div>
-
-                  {f.status !== "uploading" && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onRemoveFile(typeConfig.id, f.id); }}
-                      style={{ background: "none", color: "var(--muted)", fontSize: 14, padding: 0, flexShrink: 0, lineHeight: 1 }}
-                    >×</button>
-                  )}
                 </div>
 
-                {/* ── Faixa de sanitização ── */}
-                {!f.fromUrl && (f.status === "uploading" || rep) && (
-                  <div style={{
-                    padding: "5px 10px 6px",
-                    borderTop: "1px solid var(--border)",
-                    background: sanitOk
-                      ? "rgba(34,197,94,0.05)"
-                      : sanitSkipped
-                        ? "rgba(245,158,11,0.05)"
-                        : "rgba(124,92,252,0.04)",
-                  }}>
-                    {/* Enquanto sobe e ainda não há report */}
-                    {f.status === "uploading" && !rep && (
-                      <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10, color: "var(--muted)" }}>
-                        <span className="spinner" style={{ width: 9, height: 9 }} />
-                        {f.progress < 10
-                          ? "Preparando sanitização..."
-                          : f.progress < 18
-                            ? "Removendo metadados EXIF/XMP..."
-                            : "Enviando para nuvem..."}
-                      </div>
-                    )}
+                {/* Badge de status */}
+                {f.status === "idle"      && <span className="badge badge-gray"    style={{ fontSize: 10, flexShrink: 0 }}>Pendente</span>}
+                {f.status === "uploading" && <span className="spinner" style={{ width: 11, height: 11, flexShrink: 0 }} />}
+                {f.status === "done"      && <span className="badge badge-success" style={{ fontSize: 10, flexShrink: 0 }}>✓</span>}
+                {f.status === "error"     && <span className="badge badge-danger"  style={{ fontSize: 10, flexShrink: 0 }}>Erro</span>}
 
-                    {/* Report disponível */}
-                    {rep && (
-                      <div>
-                        {/* Linha de status */}
-                        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, flexWrap: "wrap" }}>
-                          {sanitOk && (
-                            <>
-                              <span style={{ color: "var(--success)", fontWeight: 700, fontSize: 11 }}>🛡</span>
-                              <span style={{ color: "var(--success)", fontWeight: 600 }}>
-                                Sanitizado
-                              </span>
-                              {/* ID único injetado */}
-                              {rep.uniqueId && (
-                                <span style={{
-                                  fontSize: 9, fontFamily: "monospace", padding: "1px 6px",
-                                  borderRadius: 4, background: "rgba(34,197,94,0.12)",
-                                  color: "var(--success)", letterSpacing: "0.08em",
-                                }}>
-                                  #{rep.uniqueId}
-                                </span>
-                              )}
-                              {/* Diferença de tamanho */}
-                              {rep.sizeDiff !== undefined && (
-                                <span style={{ color: "var(--muted)" }}>
-                                  {rep.sizeDiff < 0
-                                    ? `−${Math.abs(rep.sizeDiff)} B removidos`
-                                    : rep.sizeDiff > 0
-                                      ? `+${rep.sizeDiff} B (injeção)`
-                                      : "tamanho inalterado"}
-                                </span>
-                              )}
-                            </>
-                          )}
-                          {sanitSkipped && (
-                            <>
-                              <span style={{ color: "var(--warning)", fontWeight: 700 }}>○</span>
-                              <span style={{ color: "var(--warning)" }}>
-                                Formato {rep.format?.toUpperCase() || "desconhecido"} — metadados não alterados
-                              </span>
-                            </>
-                          )}
-                        </div>
-
-                        {/* Campos removidos */}
-                        {sanitOk && cleaned.length > 0 && (
-                          <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 4 }}>
-                            {cleaned.map((item, i) => (
-                              <span key={i} style={{
-                                fontSize: 9, padding: "1px 7px", borderRadius: 10,
-                                background: "rgba(239,68,68,0.08)",
-                                border: "1px solid rgba(239,68,68,0.2)",
-                                color: "var(--danger)",
-                              }}>
-                                ✕ {item}
-                              </span>
-                            ))}
-                            {injected.map((item, i) => (
-                              <span key={`inj-${i}`} style={{
-                                fontSize: 9, padding: "1px 7px", borderRadius: 10,
-                                background: "rgba(124,92,252,0.08)",
-                                border: "1px solid rgba(124,92,252,0.2)",
-                                color: "var(--accent-light)",
-                              }}>
-                                ↑ {item}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                        {sanitOk && cleaned.length === 0 && (
-                          <div style={{ marginTop: 3, fontSize: 10, color: "var(--muted)" }}>
-                            Nenhum metadado sensível encontrado · hash único injetado
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                {/* Remover */}
+                {f.status !== "uploading" && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onRemoveFile(typeConfig.id, f.id); }}
+                    style={{ background: "none", color: "var(--muted)", fontSize: 14, padding: 0, flexShrink: 0, lineHeight: 1 }}
+                  >×</button>
                 )}
               </div>
             );
