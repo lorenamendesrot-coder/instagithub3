@@ -322,23 +322,7 @@ export default function Schedule() {
   const doneCount    = queue.filter((q) => q.status === "done").length;
   const errorCount   = queue.filter((q) => q.status === "error").length;
 
-  return (
-    <div className="page">
-      <div className="page-header">
-        <div>
-          <div className="page-title">🗓 Agendar</div>
-          <div className="page-subtitle">
-            {pendingCount} agendado(s) na fila · {doneCount} publicado(s)
-            {errorCount > 0 && <span style={{ color: "var(--danger)", marginLeft: 6 }}>· {errorCount} erro(s)</span>}
-          </div>
-        </div>
-        <a href="/fila" style={{ fontSize: 12, padding: "7px 14px", borderRadius: 8, border: "1px solid var(--border)", color: "var(--muted)", textDecoration: "none", display: "flex", alignItems: "center", gap: 5 }}>
-          🗂 Ver fila {pendingCount > 0 && <span className="badge badge-info" style={{ fontSize: 10 }}>{pendingCount}</span>}
-        </a>
-      </div>
-
-      <div className="schedule-grid">
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+  const previewDist = () => {
     const urls = validUrls.map((x) => x.url.trim());
     if (!urls.length || !selectedAccounts.length) return [];
     const qty = Math.max(1, quantityPerCycle);
@@ -365,15 +349,15 @@ export default function Schedule() {
     <div className="page">
       <div className="page-header">
         <div>
-          <div className="page-title">Agendamentos</div>
+          <div className="page-title">🗓 Agendar</div>
           <div className="page-subtitle">
-            {pendingCount} pendente(s) · {doneCount} feito(s)
+            {pendingCount} agendado(s) · {doneCount} publicado(s)
             {errorCount > 0 && <span style={{ color: "var(--danger)", marginLeft: 6 }}>· {errorCount} erro(s)</span>}
           </div>
         </div>
-        {queue.length > 0 && (
-          <button className="btn btn-danger btn-sm" onClick={() => setConfirmModal({ type: "clearQueue" })}>Limpar fila</button>
-        )}
+        <a href="/fila" style={{ fontSize: 12, padding: "7px 14px", borderRadius: 8, border: "1px solid var(--border)", color: "var(--muted)", textDecoration: "none", display: "flex", alignItems: "center", gap: 5 }}>
+          🗂 Ver fila {pendingCount > 0 && <span className="badge badge-info" style={{ fontSize: 10 }}>{pendingCount}</span>}
+        </a>
       </div>
 
       <div className="schedule-grid">
@@ -733,8 +717,12 @@ export default function Schedule() {
             {scheduleLabel()}
           </button>
         </div>
-
       </div>
+
+      <Modal open={confirmModal?.type === "clearQueue"} title="Limpar fila?" message="Todos os agendamentos pendentes serão removidos." confirmLabel="Limpar fila" confirmDanger
+        onConfirm={() => { clearQueue(); setConfirmModal(null); }} onCancel={() => setConfirmModal(null)} />
+      <Modal open={confirmModal?.type === "removeItem"} title="Remover agendamento?" message="Este item será removido da fila." confirmLabel="Remover" confirmDanger
+        onConfirm={() => { removeItem(confirmModal.id); setConfirmModal(null); }} onCancel={() => setConfirmModal(null)} />
 
       <style>{`
         @media (max-width: 900px) { .schedule-grid { grid-template-columns: 1fr !important; } }
