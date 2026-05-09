@@ -7,6 +7,7 @@ const PRIMARY_NAV = [
   { to: "/",          label: "Contas",   icon: "👤" },
   { to: "/novo",      label: "Post",     icon: "✨" },
   { to: "/agendar",   label: "Agendar",  icon: "🗓️" },
+  { to: "/fila",      label: "Fila",     icon: "🗂️" },
   { to: "/historico", label: "Histórico", icon: "📋" },
   { to: "/insights",  label: "Insights", icon: "📊" },
 ];
