@@ -84,7 +84,7 @@ async function runItem(item) {
           username:    pr.username || pr.account_id,
           accounts:    item.accounts,
           // Tenta pela primeira vez 60s depois — dá tempo ao Instagram processar
-          scheduledAt: Date.now() + 60000,
+          scheduledAt: Date.now() + 30000,
           historyId,             // ← aponta para o item do histórico para atualizar
           mediaUrl,
           postType:    item.postType,
@@ -256,7 +256,7 @@ async function runVideoFinish(item) {
         notifyClients({ type: "QUEUE_UPDATE" });
       } else {
         // Ainda há tentativas — reagenda para 30s depois
-        await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + 45000 });
+        await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + 20000 });
       }
     }
 
@@ -266,7 +266,7 @@ async function runVideoFinish(item) {
       await updateItem(item.id, { status: "error", error: err.message });
       notifyClients({ type: "QUEUE_UPDATE" });
     } else {
-      await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + 45000 });
+      await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + 20000 });
     }
   }
 }
