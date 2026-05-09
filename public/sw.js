@@ -69,8 +69,8 @@ async function runItem(item) {
       const pendingResults  = results.filter((r) => r.pending && r.creation_id);
       const finishedResults = results.filter((r) => !r.pending);
 
-      // Gera um ID fixo para este item do histórico
-      const historyId = Date.now() + mi;
+      // ID fixo para o item do histórico — calculado UMA vez antes de qualquer await
+      const historyId = `h-${Date.now()}-${mi}`;
 
       // Salva video_finish para cada conta com pending
       for (const pr of pendingResults) {
@@ -185,8 +185,9 @@ async function runVideoFinish(item) {
       // ── Sucesso: atualiza o item do histórico (não cria um novo) ──────────
       const histEntry = await getHistoryItem(item.historyId);
       if (histEntry) {
-        // Adiciona esta conta nos results e remove dos pending_accounts
-        const updatedResults  = [...(histEntry.results || []), result];
+        // Remove erros anteriores desta conta (retry bem-sucedido) e adiciona o sucesso
+        const prevResults     = (histEntry.results || []).filter((r) => r.account_id !== item.account_id);
+        const updatedResults  = [...prevResults, result];
         const updatedPending  = (histEntry.pending_accounts || []).filter(
           (a) => a.account_id !== item.account_id
         );
