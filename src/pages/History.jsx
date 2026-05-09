@@ -101,9 +101,11 @@ export default function History() {
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {filtered.map((entry) => {
-            const successCount = (entry.results || []).filter((r) => r.success).length;
-            const totalCount   = (entry.results || []).length;
-            const isExpanded   = expanded[entry.id];
+            const successCount  = (entry.results || []).filter((r) => r.success).length;
+            const finishedCount = (entry.results || []).length;
+            const pendingCount  = (entry.pending_accounts || []).length;
+            const totalCount    = finishedCount + pendingCount;
+            const isExpanded    = expanded[entry.id];
 
             return (
               <div key={entry.id} className="card card-hover" style={{ cursor: "pointer" }} onClick={() => toggleExpanded(entry.id)}>
@@ -119,7 +121,12 @@ export default function History() {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 5 }}>
                       <span style={{ fontSize: 15 }}>{TYPE_ICON[entry.post_type] || "📌"}</span>
-                      <span className={`badge ${successCount === totalCount ? "badge-success" : successCount === 0 ? "badge-danger" : "badge-warning"}`}>
+                      {pendingCount > 0 && (
+                        <span className="badge" style={{ background: "rgba(56,189,248,0.12)", color: "var(--info)", border: "1px solid rgba(56,189,248,0.25)", fontSize: 11 }}>
+                          ⏳ {pendingCount} processando...
+                        </span>
+                      )}
+                      <span className={`badge ${successCount === finishedCount && pendingCount === 0 ? "badge-success" : successCount === 0 && pendingCount === 0 ? "badge-danger" : "badge-warning"}`}>
                         {successCount}/{totalCount} publicado(s)
                       </span>
                       {entry.from_scheduler && <span className="badge badge-purple">Agendado</span>}
@@ -137,6 +144,20 @@ export default function History() {
 
                     {/* Resultados por conta — sempre visíveis resumidos */}
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 8 }}>
+                      {/* Contas com vídeo ainda processando */}
+                      {(entry.pending_accounts || []).map((a, i) => (
+                        <div key={`p-${i}`} style={{
+                          display: "flex", alignItems: "center", gap: 4,
+                          padding: "3px 9px", borderRadius: 20, fontSize: 11, fontWeight: 500,
+                          background: "rgba(56,189,248,0.08)",
+                          border: "1px solid rgba(56,189,248,0.2)",
+                          color: "var(--info)",
+                        }}>
+                          <span>⏳</span>
+                          <span>@{a.username}</span>
+                        </div>
+                      ))}
+                      {/* Contas finalizadas (sucesso ou erro) */}
                       {(entry.results || []).map((r, i) => (
                         <div key={i} title={r.error || ""}
                           style={{
