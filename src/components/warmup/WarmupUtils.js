@@ -144,14 +144,31 @@ export function timeToMs(dateBase, timeStr) {
 export function generateSlotTimes(dayBase, count, plan) {
   const windowStart = timeToMs(dayBase, plan.windowStart);
   const windowEnd   = timeToMs(dayBase, plan.windowEnd);
-  const intervalMs  = plan.intervalMinMin * 60 * 1000;
+
+  // Intervalo base aleatório entre min e max (distribui os posts na janela)
+  const intervalMin = plan.intervalMinMin * 60 * 1000;
+  const intervalMax = (plan.intervalMinMax || plan.intervalMinMin) * 60 * 1000;
+
+  // Jitter em minutos específico do preset (±N min) + segundos aleatórios
+  const jM = plan.jitterMin ?? 10; // fallback 10min se não definido
+  const jitterMinRange = [-jM, jM];
+
   const times = [];
+  let cursor = windowStart;
+
   for (let i = 0; i < count; i++) {
-    const base = new Date(windowStart + i * intervalMs);
-    if (base.getTime() > windowEnd) break;
-    const jittered = addJitter(base, JITTER_MIN_RANGE, JITTER_SEC_RANGE);
+    // Intervalo aleatório entre min e max para cada slot
+    const randInterval = intervalMin + Math.random() * (intervalMax - intervalMin);
+    const base = i === 0 ? new Date(cursor) : new Date(cursor + randInterval);
+    cursor = base.getTime();
+
+    if (cursor > windowEnd) break;
+
+    // Aplica jitter de minutos e segundos aleatórios
+    const jittered = addJitter(base, jitterMinRange, JITTER_SEC_RANGE);
     const final = new Date(Math.min(Math.max(jittered.getTime(), windowStart), windowEnd));
     times.push(final);
+    cursor = final.getTime(); // avança o cursor para o slot atual
   }
   return times;
 }
