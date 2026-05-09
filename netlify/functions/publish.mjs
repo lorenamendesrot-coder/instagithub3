@@ -18,8 +18,9 @@ const R2_BUCKET     = process.env.R2_BUCKET     || "insta-midias";
 const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL;
 const R2_ENDPOINT   = R2_ACCOUNT_ID ? `${R2_ACCOUNT_ID}.r2.cloudflarestorage.com` : null;
 
-function hmac(key, data, enc) { return crypto.createHmac("sha256", key).update(data).digest(enc); }
-function hash(data)            { return crypto.createHash("sha256").update(data).digest("hex"); }
+function hmac(key, data)    { return crypto.createHmac("sha256", key).update(data).digest(); }  // sempre Buffer
+function hmacHex(key, data) { return crypto.createHmac("sha256", key).update(data).digest("hex"); }
+function hash(data)         { return crypto.createHash("sha256").update(data).digest("hex"); }
 function getSignKey(secret, date, region, service) {
   return hmac(hmac(hmac(hmac("AWS4"+secret, date), region), service), "aws4_request");
 }
@@ -46,7 +47,7 @@ function uploadToR2(buf, mimeType, ext) {
     if (!R2_ACCOUNT_ID || !R2_ACCESS_KEY || !R2_SECRET_KEY || !R2_PUBLIC_URL)
       return reject(new Error("R2 não configurado"));
     const now       = new Date();
-    const amzDate   = now.toISOString().replace(/[:-]|\.\d{3}/g,"").slice(0,15)+"Z";
+    const amzDate   = now.toISOString().replace(/[-:]/g,"").replace(/\.\d{3}Z$/,"Z").slice(0,16);
     const dateStamp = amzDate.slice(0,8);
     const key       = `pub/${Date.now()}-${crypto.randomBytes(6).toString("hex")}.${ext}`;
     const bodyHash  = hash(buf);
@@ -57,7 +58,7 @@ function uploadToR2(buf, mimeType, ext) {
     const canon  = ["PUT",`/${R2_BUCKET}/${key}`,"",canonHeaders,signed,bodyHash].join("\n");
     const scope  = `${dateStamp}/auto/s3/aws4_request`;
     const sts    = ["AWS4-HMAC-SHA256",amzDate,scope,hash(canon)].join("\n");
-    const sig    = hmac(getSignKey(R2_SECRET_KEY,dateStamp,"auto","s3"), sts, "hex");
+    const sig    = hmacHex(getSignKey(R2_SECRET_KEY,dateStamp,"auto","s3"), sts);
     const auth   = `AWS4-HMAC-SHA256 Credential=${R2_ACCESS_KEY}/${scope}, SignedHeaders=${signed}, Signature=${sig}`;
     const req = https.request({
       hostname: R2_ENDPOINT, path: `/${R2_BUCKET}/${key}`, method: "PUT", timeout: 20000,
