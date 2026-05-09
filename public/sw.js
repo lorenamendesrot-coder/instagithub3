@@ -19,9 +19,16 @@ function startTicker() {
 
 async function tick() {
   const queue = await readQueue();
-  const now = Date.now();
-  const due = queue.filter((x) => x.scheduledAt <= now && x.status === "pending");
+  const now   = Date.now();
+
+  // Itens normais de agendamento
+  const due = queue.filter(
+    (x) => !x.type && x.scheduledAt <= now && x.status === "pending"
+  );
   for (const item of due) await runItem(item);
+
+  // Itens de finalização de vídeo (criados quando o publish retorna pending:true)
+  await runVideoFinishItems();
 }
 
 async function runItem(item) {
@@ -65,24 +72,34 @@ async function runItem(item) {
       const data = await res.json();
       let results = data.results || [];
 
-      // Trata vídeos com pending: true — tenta media_publish separado após aguardar
+      // Trata vídeos com pending: true
+      // Salva no IndexedDB como "video_finish" — processado num tick futuro (60s+)
+      // NÃO usamos sleep() aqui — o SW pode ser morto pelo browser antes de terminar
       const pendingResults = results.filter((r) => r.pending && r.creation_id);
       if (pendingResults.length > 0) {
-        await sleep(25000); // aguarda 25s — Instagram leva tempo para processar vídeos
-        const retryRes = await fetch(`${origin}/.netlify/functions/publish-finish`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pending: pendingResults, accounts: item.accounts }),
-        });
-        if (retryRes.ok) {
-          const retryData = await retryRes.json();
-          // Substitui os resultados pending pelos finais
-          results = results.map((r) => {
-            if (!r.pending) return r;
-            const finished = (retryData.results || []).find((f) => f.account_id === r.account_id);
-            return finished || r;
+        for (const pr of pendingResults) {
+          await saveVideoFinish({
+            id:          `vf-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            type:        "video_finish",
+            status:      "pending",
+            creation_id: pr.creation_id,
+            account_id:  pr.account_id,
+            username:    pr.username || "",
+            accounts:    item.accounts,
+            scheduledAt: Date.now() + 60000, // tenta 60s depois — dá tempo ao Instagram
+            parentId:    item.id,
+            mediaUrl:    mediaUrl,
+            postType:    item.postType,
+            mediaType:   item.mediaType,
+            caption:     item.caption || "",
+            createdAt:   new Date().toISOString(),
+            attempts:    0,
+            maxAttempts: 8, // 8 ticks × 20s = ~2.5 min de janela total
           });
+          console.log(`[SW] Vídeo pendente salvo → @${pr.username} creation_id:${pr.creation_id}`);
         }
+        // Remove pending dos resultados imediatos — o histórico será atualizado quando concluir
+        results = results.filter((r) => !r.pending);
       }
 
       totalResults = [...totalResults, ...results];
@@ -139,6 +156,109 @@ async function runItem(item) {
   }
 
   notifyClients({ type: "QUEUE_UPDATE" });
+}
+
+// ─── Salva item video_finish no IndexedDB ────────────────────────────────────
+async function saveVideoFinish(item) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("queue", "readwrite");
+    tx.objectStore("queue").put(item);
+    tx.oncomplete = resolve;
+    tx.onerror = reject;
+  });
+}
+
+// ─── Processa items video_finish pendentes no tick ────────────────────────────
+// Chamada a cada tick — encontra itens tipo "video_finish" com scheduledAt <= now
+async function runVideoFinishItems() {
+  const queue = await readQueue();
+  const now   = Date.now();
+  const due   = queue.filter(
+    (x) => x.type === "video_finish" && x.status === "pending" && x.scheduledAt <= now
+  );
+  for (const item of due) {
+    await runVideoFinish(item);
+  }
+}
+
+async function runVideoFinish(item) {
+  // Marca como running para não processar duas vezes
+  await updateItem(item.id, { status: "running" });
+
+  const origin = self.location.origin;
+
+  try {
+    const res = await fetch(`${origin}/.netlify/functions/publish-finish`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({
+        pending:  [{ account_id: item.account_id, creation_id: item.creation_id, username: item.username }],
+        accounts: item.accounts,
+      }),
+    });
+
+    if (!res.ok) throw new Error(`publish-finish HTTP ${res.status}`);
+    const data    = await res.json();
+    const results = data.results || [];
+    const result  = results[0];
+
+    if (result?.success) {
+      // Sucesso — salva no histórico e remove da fila
+      await appendHistory({
+        id:             Date.now(),
+        post_type:      item.postType,
+        media_url:      item.mediaUrl,
+        media_type:     item.mediaType,
+        default_caption: item.caption,
+        results:        [result],
+        created_at:     new Date().toISOString(),
+        from_scheduler: true,
+        video_finish:   true,
+      });
+      await updateItem(item.id, { status: "done", result, finishedAt: new Date().toISOString() });
+      console.log(`[SW] video_finish OK — @${item.username} media_id:${result.media_id}`);
+
+      notifyClients({ type: "QUEUE_UPDATE" });
+
+      try {
+        if (Notification.permission === "granted") {
+          self.registration.showNotification("Insta Manager", {
+            body: `✅ Reel publicado — @${item.username}`,
+            icon: "/favicon.ico",
+            tag:  `vf-${item.id}`,
+          });
+        }
+      } catch (_) {}
+
+    } else if (result && !result.success) {
+      // Erro definitivo do Instagram — não tenta mais
+      const errMsg = result.error || "Erro desconhecido";
+      console.warn(`[SW] video_finish FALHOU — @${item.username}: ${errMsg}`);
+      await updateItem(item.id, { status: "error", error: errMsg });
+      notifyClients({ type: "QUEUE_UPDATE" });
+
+    } else {
+      // Sem resultado — reagenda para daqui a 30s se ainda tiver tentativas
+      const attempts = (item.attempts || 0) + 1;
+      if (attempts >= item.maxAttempts) {
+        await updateItem(item.id, { status: "error", error: `Timeout: vídeo não processou após ${attempts} tentativas` });
+        notifyClients({ type: "QUEUE_UPDATE" });
+      } else {
+        await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + 30000 });
+      }
+    }
+
+  } catch (err) {
+    const attempts = (item.attempts || 0) + 1;
+    if (attempts >= item.maxAttempts) {
+      await updateItem(item.id, { status: "error", error: err.message });
+      notifyClients({ type: "QUEUE_UPDATE" });
+    } else {
+      // Falha de rede — tenta novamente no próximo tick
+      await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + 20000 });
+    }
+  }
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
