@@ -74,21 +74,39 @@ function useScheduler(addEntry) {
             const mediaUrl = urlsToPost[mi];
             if (mi > 0) await new Promise(r => setTimeout(r, 3000));
 
-            const res = await fetch("/.netlify/functions/publish", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                accounts: item.accounts,
-                media_url: mediaUrl,
-                media_type: item.mediaType,
-                post_type: item.postType,
-                captions: item.captions || {},
-                default_caption: item.caption || "",
-                delay_seconds: 0,
-              }),
-            });
+            // Retry com backoff exponencial: 3 tentativas, esperas de 5s → 15s → 45s
+            const MAX_RETRIES = 3;
+            let res, lastErr;
+            for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+              if (attempt > 0) {
+                const waitMs = 5000 * Math.pow(3, attempt - 1);
+                console.log(`[scheduler] retry ${attempt + 1}/${MAX_RETRIES} para item ${item.id}, aguardando ${waitMs / 1000}s`);
+                await new Promise(r => setTimeout(r, waitMs));
+              }
+              try {
+                res = await fetch("/.netlify/functions/publish", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    accounts: item.accounts,
+                    media_url: mediaUrl,
+                    media_type: item.mediaType,
+                    post_type: item.postType,
+                    captions: item.captions || {},
+                    default_caption: item.caption || "",
+                    delay_seconds: 0,
+                  }),
+                });
+                // Erros 4xx são definitivos (não retentar); 5xx e erros de rede → retry
+                if (res.ok || (res.status >= 400 && res.status < 500)) break;
+                lastErr = new Error(`HTTP ${res.status}`);
+              } catch (fetchErr) {
+                lastErr = fetchErr;
+                res = null;
+              }
+            }
 
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            if (!res || !res.ok) throw lastErr || new Error(`HTTP ${res?.status}`);
             const data = await res.json();
             const results = data.results || [];
 
@@ -114,7 +132,7 @@ function useScheduler(addEntry) {
             await dbPut("queue", { ...item, status: "done" });
           }
         } catch (err) {
-          await dbPut("queue", { ...item, status: "error", error: err.message });
+          await dbPut("queue", { ...item, status: "error", error: err.message, failedAt: new Date().toISOString(), retryCount: (item.retryCount || 0) + 1 });
         }
 
         runningRef.current.delete(item.id);
