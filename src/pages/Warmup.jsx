@@ -26,6 +26,7 @@ export default function Warmup() {
   const [selectedAccIds, setSelectedAccIds] = useState(null); // null = todas selecionadas
   const [urlInputs,    setUrlInputs]    = useState({ reels: "", feed: "", stories: "" });
   const [dayConfig,       setDayConfig]       = useState(WARMUP_PRESET_2D.days);
+  const [selectedDays,    setSelectedDays]    = useState(() => WARMUP_PRESET_2D.days.map((d) => d.day)); // dias ativos
   const [loopEnabled,     setLoopEnabled]     = useState(false);
   const [loopDays,        setLoopDays]        = useState(7); // quantos dias extras em loop
   const [queue,        setQueue]        = useState([]);
@@ -209,17 +210,35 @@ export default function Warmup() {
       feed:    (files.feed    || []).filter((f) => f.status === "done").map((f) => ({ url: f.url, name: f.name })),
       stories: (files.stories || []).filter((f) => f.status === "done").map((f) => ({ url: f.url, name: f.name })),
     };
+    const activeDays = dayConfig.filter((d) => selectedDays.includes(d.day));
+    if (!activeDays.length) { alert("Selecione pelo menos um dia para gerar a fila."); return; }
     const generated = buildWarmupQueue({
       accounts: selectedAccounts, mediaByType,
       captions: parsedCaptions, captionMode,
-      preset: { ...WARMUP_PRESET_2D, days: dayConfig },
+      preset: { ...WARMUP_PRESET_2D, days: activeDays },
       startDateStr: startDate, distribution,
       loopEnabled, loopDays,
     });
     setQueue(generated);
     setSaved(false);
     setTab("preview");
-  }, [files, selectedAccounts, parsedCaptions, captionMode, dayConfig, startDate, distribution, stats.totalDone, loopEnabled, loopDays]);
+  }, [files, selectedAccounts, parsedCaptions, captionMode, dayConfig, selectedDays, startDate, distribution, stats.totalDone, loopEnabled, loopDays]);
+
+  const cancelWarmupQueue = useCallback(async () => {
+    if (!window.confirm("Cancelar toda a fila de aquecimento pendente? Posts já publicados não serão desfeitos.")) return;
+    try {
+      const all = await dbGetAll("queue");
+      const toRemove = all.filter((x) => x.warmup && x.status === "pending");
+      for (const item of toRemove) {
+        await dbPut("queue", { ...item, status: "cancelled" });
+      }
+      const q = await dbGetAll("queue");
+      setDbQueue(q.filter((x) => x.warmup));
+      setQueue([]);
+    } catch (err) {
+      alert("Erro ao cancelar fila: " + err.message);
+    }
+  }, []);
 
   const confirmQueue = useCallback(async () => {
     if (!queue.length) return;
@@ -238,12 +257,10 @@ export default function Warmup() {
     }
   }, [queue]);
 
-  const updateDayConfig = (dayIdx, key, value) => {
-    setDayConfig((prev) => {
-      const next = [...prev];
-      next[dayIdx] = { ...next[dayIdx], [key]: value };
-      return next;
-    });
+  const updateDayConfig = (dayNum, key, value) => {
+    setDayConfig((prev) =>
+      prev.map((d) => d.day === dayNum ? { ...d, [key]: value } : d)
+    );
   };
 
   const previewStats = useMemo(() => {
@@ -561,8 +578,47 @@ export default function Warmup() {
             </div>
           </div>
 
-          {/* Config por dia */}
-          {dayConfig.map((dayPlan, dayIdx) => (
+          {/* Seleção de dias ativos */}
+          <div className="card" style={{ marginBottom: 4 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              📅 Dias do aquecimento
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {dayConfig.map((dayPlan) => {
+                const active = selectedDays.includes(dayPlan.day);
+                return (
+                  <button
+                    key={dayPlan.day}
+                    onClick={() => setSelectedDays((prev) =>
+                      active
+                        ? prev.filter((d) => d !== dayPlan.day)
+                        : [...prev, dayPlan.day].sort((a, b) => a - b)
+                    )}
+                    style={{
+                      padding: "8px 16px", borderRadius: 10, fontSize: 12, fontWeight: active ? 700 : 400,
+                      cursor: "pointer", transition: "all 0.15s",
+                      background: active ? "rgba(124,92,252,0.15)" : "var(--bg3)",
+                      border: `1px solid ${active ? "rgba(124,92,252,0.45)" : "var(--border)"}`,
+                      color: active ? "var(--accent-light)" : "var(--muted)",
+                    }}
+                  >
+                    {active ? "✓ " : ""}{dayPlan.label.split("—")[0].trim()}
+                    <span style={{ fontSize: 10, marginLeft: 6, opacity: 0.7 }}>
+                      {dayPlan.reels + dayPlan.feed + dayPlan.stories} posts
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {selectedDays.length === 0 && (
+              <div style={{ marginTop: 10, fontSize: 11, color: "var(--danger)" }}>
+                ⚠️ Selecione pelo menos um dia.
+              </div>
+            )}
+          </div>
+
+          {/* Config por dia — mostra apenas os dias selecionados */}
+          {dayConfig.filter((d) => selectedDays.includes(d.day)).map((dayPlan, dayIdx) => (
             <div key={dayPlan.day} className="card">
               <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 14, color: "var(--accent-light)" }}>
                 📅 {dayPlan.label}
@@ -585,7 +641,7 @@ export default function Warmup() {
                         min={0}
                         max={15}
                         value={dayPlan[key]}
-                        onChange={(e) => updateDayConfig(dayIdx, key, parseInt(e.target.value) || 0)}
+                        onChange={(e) => updateDayConfig(dayPlan.day, key, parseInt(e.target.value) || 0)}
                         style={{ marginTop: 4 }}
                       />
                     </div>
@@ -607,7 +663,7 @@ export default function Warmup() {
                       value={dayPlan[key]}
                       min={type === "number" ? 30 : undefined}
                       max={type === "number" ? 360 : undefined}
-                      onChange={(e) => updateDayConfig(dayIdx, key, type === "number" ? (parseInt(e.target.value) || 60) : e.target.value)}
+                      onChange={(e) => updateDayConfig(dayPlan.day, key, type === "number" ? (parseInt(e.target.value) || 60) : e.target.value)}
                     />
                   </div>
                 ))}
@@ -753,8 +809,13 @@ export default function Warmup() {
                   );
                 })}
               </div>
-              <div style={{ marginTop: 12 }}>
+              <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
                 <button className="btn btn-ghost btn-sm" onClick={() => setTab("config")}>⚙️ Novo agendamento</button>
+                {dbQueue.some((q) => q.status === "pending") && (
+                  <button className="btn btn-danger btn-sm" onClick={cancelWarmupQueue}>
+                    🗑 Cancelar pendentes
+                  </button>
+                )}
               </div>
             </div>
           ) : (
@@ -882,12 +943,19 @@ export default function Warmup() {
             Dados coletados via Instagram Graph API. Se detectado, pause o aquecimento por 24–48h.
           </div>
 
-          <button className="btn btn-ghost btn-sm" style={{ marginTop: 12 }} onClick={async () => {
-            const q = await dbGetAll("queue");
-            setDbQueue(q.filter((x) => x.warmup));
-          }}>
-            🔄 Recarregar dados
-          </button>
+          <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button className="btn btn-ghost btn-sm" onClick={async () => {
+              const q = await dbGetAll("queue");
+              setDbQueue(q.filter((x) => x.warmup));
+            }}>
+              🔄 Recarregar dados
+            </button>
+            {dbQueue.some((q) => q.status === "pending") && (
+              <button className="btn btn-danger btn-sm" onClick={cancelWarmupQueue}>
+                🗑 Cancelar fila pendente
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
