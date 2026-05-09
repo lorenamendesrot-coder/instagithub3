@@ -1,5 +1,5 @@
 // Warmup.jsx
-import { sanitizeFile } from "../sanitizeClient.js"; — Aquecimento de Contas v3 (reescrita completa)
+import { sanitizeFile } from "../sanitizeClient.js";
 // Foco: aquecimento rápido em 2 dias, Reels-first, proteção de contas novas
 // Tabs: Upload de Mídias | Legendas | Configuração | Preview da Fila | Monitor
 
