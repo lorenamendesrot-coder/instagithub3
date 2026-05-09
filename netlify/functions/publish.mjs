@@ -2,7 +2,7 @@
 import https from "https";
 import http  from "http";
 import crypto from "crypto";
-import { sanitizeMedia, detectMime } from "./sanitize-media.mjs";
+import { sanitizeMedia, varyMediaForAccount, detectMime } from "./sanitize-media.mjs";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -79,28 +79,29 @@ function uploadToR2(buf, mimeType, ext) {
 // ─── Sanitiza + re-upload por conta ──────────────────────────────────────────
 const mediaCache = new Map(); // cache do download original por URL (evita baixar N vezes)
 
-async function getUniqueMediaUrl(originalUrl, mimeTypeHint) {
-  // Baixa o original (com cache)
+async function getUniqueMediaUrl(originalUrl, mimeTypeHint, accountId) {
+  // Baixa o original (com cache) — evita baixar N vezes para N contas
   let original = mediaCache.get(originalUrl);
   if (!original) {
     const { buf, contentType } = await downloadUrl(originalUrl);
     const mime = mimeTypeHint || contentType.split(";")[0].trim() || detectMime(buf) || "application/octet-stream";
-    original = { buf, mime };
+    // Sanitiza metadados na primeira vez
+    const sanitized = sanitizeMedia(buf, mime);
+    original = { buf: sanitized, mime };
     mediaCache.set(originalUrl, original);
-    // Limpa cache após 5 min para não acumular memória
     setTimeout(() => mediaCache.delete(originalUrl), 5 * 60 * 1000);
   }
   const { buf, mime } = original;
-  // Sanitiza — gera versão única (bytes aleatórios diferentes a cada chamada)
-  const sanitized = sanitizeMedia(buf, mime);
-  // Determina extensão
+  // Varia o arquivo especificamente para esta conta
+  // Aplica: variação de timestamp MP4, edit list, overlay de ruído
+  const varied = varyMediaForAccount(buf, mime);
   const extMap = {
     "image/jpeg":"jpg","image/jpg":"jpg","image/png":"png","image/webp":"webp",
     "video/mp4":"mp4","video/quicktime":"mov","video/webm":"webm",
   };
   const ext = extMap[mime] || mime.split("/")[1] || "bin";
-  // Faz upload pro R2
-  const url = await uploadToR2(sanitized, mime, ext);
+  const url = await uploadToR2(varied, mime, ext);
+  console.log(`[conta:${accountId}] Variação gerada → ${url}`);
   return url;
 }
 
@@ -217,7 +218,7 @@ export const handler = async (event) => {
     // Gera versão única da mídia para esta conta (sanitiza metadados)
     let unique_media_url = media_url;
     try {
-      unique_media_url = await getUniqueMediaUrl(media_url, mimeHint);
+      unique_media_url = await getUniqueMediaUrl(media_url, mimeHint, account.id);
       console.log(`[${account.username}] URL única gerada: ${unique_media_url}`);
     } catch(err) {
       console.warn(`[${account.username}] Sanitização falhou, usando original: ${err.message}`);
