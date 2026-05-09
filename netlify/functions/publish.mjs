@@ -28,7 +28,7 @@ function getSignKey(secret, date, region, service) {
 function downloadUrl(url) {
   return new Promise((resolve, reject) => {
     const lib = url.startsWith("https") ? https : http;
-    lib.get(url, { timeout: 30000 }, (res) => {
+    lib.get(url, { timeout: 15000 }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         return downloadUrl(res.headers.location).then(resolve).catch(reject);
       }
@@ -60,7 +60,7 @@ function uploadToR2(buf, mimeType, ext) {
     const sig    = hmac(getSignKey(R2_SECRET_KEY,dateStamp,"auto","s3"), sts, "hex");
     const auth   = `AWS4-HMAC-SHA256 Credential=${R2_ACCESS_KEY}/${scope}, SignedHeaders=${signed}, Signature=${sig}`;
     const req = https.request({
-      hostname: R2_ENDPOINT, path: `/${R2_BUCKET}/${key}`, method: "PUT", timeout: 60000,
+      hostname: R2_ENDPOINT, path: `/${R2_BUCKET}/${key}`, method: "PUT", timeout: 20000,
       headers: { "Content-Type": mimeType, "Content-Length": buf.length,
         "x-amz-date": amzDate, "x-amz-content-sha256": bodyHash, "Authorization": auth },
     }, (res) => {
@@ -159,14 +159,20 @@ async function verifyToken(token){
   catch{return{valid:true,expired:false};}
 }
 
-async function waitForContainer(id,token,max=20){
-  for(let i=0;i<max;i++){
-    await sleep(6000);
-    const r=await fetch(`${GRAPH}/${id}?fields=status_code&access_token=${token}`),d=await r.json();
-    if(d.status_code==="FINISHED")return true;
-    if(d.status_code==="ERROR")return false;
+async function waitForContainer(id, token, max = 5) {
+  // Netlify tem timeout de 26s — polling máximo de 5×4s = 20s
+  // Se não finalizar, retorna o creation_id para o cliente tentar publish separado
+  for (let i = 0; i < max; i++) {
+    await sleep(4000);
+    try {
+      const r = await fetch(`${GRAPH}/${id}?fields=status_code&access_token=${token}`);
+      const d = await r.json();
+      if (d.status_code === "FINISHED") return { ready: true };
+      if (d.status_code === "ERROR")    return { ready: false, error: "Instagram reportou erro no processamento" };
+    } catch { /* ignora erros de rede no polling */ }
   }
-  return false;
+  // Timeout no polling — retorna pending para o cliente tentar publicar depois
+  return { ready: false, pending: true, creation_id: id };
 }
 
 async function publishOne({account, media_url, media_type, post_type, caption, unique_media_url}){
@@ -199,7 +205,16 @@ async function publishOne({account, media_url, media_type, post_type, caption, u
     const cRes=await fetch(`${GRAPH}/${igId}/media`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
     const cData=await cRes.json();
     if(cData.error)return{success:false,error:cData.error.message,errorCode:cData.error.code};
-    if(isVideo||post_type==="REEL"){const ready=await waitForContainer(cData.id,token);if(!ready)return{success:false,error:"Timeout no processamento do vídeo (120s)."};    }
+    if (isVideo || post_type === "REEL") {
+      const result = await waitForContainer(cData.id, token);
+      if (result.pending) {
+        // Vídeo ainda processando — retorna creation_id para o cliente finalizar depois
+        return { success: false, pending: true, creation_id: cData.id, error: "Vídeo ainda processando. O publish será tentado novamente automaticamente." };
+      }
+      if (!result.ready) {
+        return { success: false, error: result.error || "Erro no processamento do vídeo." };
+      }
+    }
     const pRes=await fetch(`${GRAPH}/${igId}/media_publish`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({creation_id:cData.id,access_token:token})});
     const pData=await pRes.json();
     if(pData.error)return{success:false,error:pData.error.message,errorCode:pData.error.code};
