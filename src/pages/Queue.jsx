@@ -84,7 +84,7 @@ export default function Queue() {
             { id: "running", label: "Rodando",   count: runningCount  },
             { id: "done",    label: "Feitos",    count: doneCount     },
             { id: "error",   label: "Erros",     count: errorCount    },
-          ].filter(({ count }) => count > 0 || id === "all").map(({ id, label, count }) => (
+          ].filter(({ id, count }) => count > 0 || id === "all").map(({ id, label, count }) => (
             <button
               key={id}
               onClick={() => setFilter(id)}
