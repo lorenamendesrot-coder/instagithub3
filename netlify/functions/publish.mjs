@@ -1,7 +1,25 @@
 // publish.mjs
+import { getStore } from "@netlify/blobs";
+
 const GRAPH          = "https://graph.facebook.com/v21.0";
 const sleep          = (ms) => new Promise((r) => setTimeout(r, ms));
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || process.env.URL || "";
+
+// ─── Busca token fresco do Blobs (fallback quando o body não traz token) ───────
+async function getFreshToken(accountId) {
+  try {
+    const store = getStore({
+      name: "insta-accounts",
+      siteID: process.env.NETLIFY_SITE_ID,
+      token:  process.env.NETLIFY_TOKEN,
+      consistency: "strong",
+    });
+    const acc = await store.get(`account-${accountId}`, { type: "json" });
+    return acc?.access_token || null;
+  } catch {
+    return null;
+  }
+}
 
 // ─── Rate limit em memória ────────────────────────────────────────────────────
 const warmupState = new Map();
@@ -83,7 +101,11 @@ async function waitForContainer(id, token) {
 
 // ─── Publicação por conta ─────────────────────────────────────────────────────
 async function publishOne({ account, media_url, media_type, post_type, caption }) {
-  const token = account.access_token;
+  // Usa o token do body; se ausente (ex: token não salvo na queue), busca direto do Blobs
+  let token = account.access_token;
+  if (!token && account.id) {
+    token = await getFreshToken(account.id);
+  }
   if (!token) return { success: false, error: "Token não encontrado. Reconecte a conta." };
 
   const isVideo = media_type === "VIDEO";
