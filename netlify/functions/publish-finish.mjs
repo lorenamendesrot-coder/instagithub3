@@ -1,11 +1,11 @@
 // publish-finish.mjs
 // Finaliza containers de vídeo que ficaram pendentes no publish principal.
-// Chamada pelo SW quando publish retorna { pending: true, creation_id }.
-// Só faz: poll curto → media_publish. Sem download, sem R2, sem sanitização.
+// Estratégia: checa status UMA vez por chamada — se FINISHED publica imediatamente,
+// se IN_PROGRESS retorna not_ready para o SW reagendar (sem desperdiçar 20s de poll).
 
 import { getStore } from "@netlify/blobs";
 
-const GRAPH         = "https://graph.facebook.com/v21.0";
+const GRAPH          = "https://graph.facebook.com/v21.0";
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || process.env.URL || "";
 const sleep          = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -24,23 +24,50 @@ async function getFreshToken(accountId) {
   }
 }
 
-// Poll até FINISHED — máximo 4×5s = 20s (dentro do timeout de 26s do Netlify)
-// Se não FINISHED: retorna not_ready — o SW vai chamar de novo no próximo tick
-async function pollUntilReady(creationId, token) {
-  for (let i = 0; i < 4; i++) {
-    await sleep(5000);
+// Checa status do container com até 3 polls rápidos de 3s.
+// Retorna imediatamente se FINISHED ou ERROR — não fica bloqueado em IN_PROGRESS.
+async function checkContainer(creationId, token) {
+  for (let i = 0; i < 3; i++) {
+    if (i > 0) await sleep(3000);
     try {
       const r = await fetch(`${GRAPH}/${creationId}?fields=status_code&access_token=${token}`);
       const d = await r.json();
-      if (d.status_code === "FINISHED") return { ready: true, forced: false };
-      if (d.status_code === "ERROR")    return { ready: false, error: "Instagram reportou erro no processamento do vídeo" };
-      // IN_PROGRESS — continua o loop
-      console.log(`[publish-finish] ${creationId} ainda IN_PROGRESS (tentativa ${i+1}/4)`);
-    } catch { /* ignora erros de rede */ }
+      if (d.error) return { ready: false, expired: true, error: d.error.message };
+      if (d.status_code === "FINISHED") return { ready: true };
+      if (d.status_code === "ERROR")    return { ready: false, error: "Instagram: erro no processamento do vídeo" };
+      console.log(`[publish-finish] ${creationId} IN_PROGRESS (check ${i + 1}/3)`);
+    } catch (e) {
+      console.warn(`[publish-finish] erro ao checar ${creationId}:`, e.message);
+    }
   }
-  // Não confirmou FINISHED dentro de 20s — retorna not_ready
-  // O SW vai reagendar para o próximo tick (não faz publish optimistic — reduz erros "Media ID not available")
   return { ready: false, not_ready: true };
+}
+
+// Tenta publicar. Se der "Media ID not available" tenta até 3x com 4s de intervalo.
+async function tryPublish(accountId, creationId, token, username) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await sleep(4000);
+    try {
+      const pRes  = await fetch(`${GRAPH}/${accountId}/media_publish`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ creation_id: creationId, access_token: token }),
+      });
+      const pData = await pRes.json();
+      if (!pData.error) {
+        return { account_id: accountId, username, success: true, media_id: pData.id, published_at: new Date().toISOString() };
+      }
+      if (pData.error.code === 9007 || pData.error.message?.includes("Media ID")) {
+        console.warn(`[publish-finish] Media ID not available — tentativa ${attempt + 1}/3`);
+        continue;
+      }
+      return { account_id: accountId, username, success: false, error: pData.error.message, errorCode: pData.error.code };
+    } catch (err) {
+      if (attempt < 2) continue;
+      return { account_id: accountId, username, success: false, error: err.message };
+    }
+  }
+  return { account_id: accountId, username, success: false, error: "Media ID not available após 3 tentativas" };
 }
 
 export const handler = async (event) => {
@@ -73,40 +100,25 @@ export const handler = async (event) => {
     const token      = freshToken || account?.access_token;
 
     if (!token || !creation_id) {
-      results.push({ account_id, success: false, error: "Token ou creation_id ausente" });
+      results.push({ account_id, username: item.username || account?.username, success: false, error: "Token ou creation_id ausente" });
       continue;
     }
 
-    // Poll — 4×5s = 20s máximo
-    const poll = await pollUntilReady(creation_id, token);
+    const check = await checkContainer(creation_id, token);
 
-    if (poll.not_ready) {
-      // Vídeo ainda processando — retorna sem resultado para o SW reagendar
-      // O SW detecta results=[] e incrementa attempts até maxAttempts
-      console.log(`[${account?.username}] Vídeo ainda não pronto — SW vai tentar novamente`);
-      continue; // não adiciona em results — SW interpreta como "sem resultado ainda"
+    if (check.not_ready) {
+      console.log(`[publish-finish] @${item.username} IN_PROGRESS — reagendando`);
+      continue; // SW interpreta results=[] como "ainda não pronto"
     }
 
-    if (!poll.ready) {
-      results.push({ account_id, username: account?.username, success: false, error: poll.error });
+    if (check.expired || (!check.ready && check.error)) {
+      results.push({ account_id, username: item.username || account?.username, success: false, error: check.error });
       continue;
     }
 
-    // Publish
-    try {
-      const pRes  = await fetch(`${GRAPH}/${account_id}/media_publish`, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ creation_id, access_token: token }),
-      });
-      const pData = await pRes.json();
-      if (pData.error) {
-        results.push({ account_id, username: account?.username, success: false, error: pData.error.message });
-      } else {
-        results.push({ account_id, username: account?.username, success: true, media_id: pData.id, published_at: new Date().toISOString() });
-      }
-    } catch (err) {
-      results.push({ account_id, username: account?.username, success: false, error: err.message });
+    if (check.ready) {
+      const result = await tryPublish(account_id, creation_id, token, item.username || account?.username);
+      results.push(result);
     }
   }
 
