@@ -1,4 +1,5 @@
-// Warmup.jsx — Aquecimento de Contas v3 (reescrita completa)
+// Warmup.jsx
+import { sanitizeFile } from "../sanitizeClient.js"; — Aquecimento de Contas v3 (reescrita completa)
 // Foco: aquecimento rápido em 2 dias, Reels-first, proteção de contas novas
 // Tabs: Upload de Mídias | Legendas | Configuração | Preview da Fila | Monitor
 
@@ -76,10 +77,10 @@ function isNewAccount(acc) {
 }
 
 // Upload direto do browser para R2 via presigned URL — sem limite de tamanho
-async function uploadFile(file, onProgress) {
+async function uploadFile(file, onProgress, onSanitized) {
   onProgress(2);
 
-  // Passo 1: obter presigned URL da Netlify Function (só metadados)
+  // Passo 1: obter presigned URL
   const presignRes = await fetch("/api/r2-presign", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -90,21 +91,33 @@ async function uploadFile(file, onProgress) {
     throw new Error(err.error || `Erro ao gerar URL (${presignRes.status})`);
   }
   const { presignedUrl, publicUrl } = await presignRes.json();
-  onProgress(5);
+  onProgress(8);
 
-  // Passo 2: PUT direto no R2 com progresso real via XHR
+  // Passo 2: sanitizar no browser (remove EXIF/metadados)
+  let fileToUpload = file;
+  try {
+    const { file: sanitized, report } = await sanitizeFile(file);
+    fileToUpload = sanitized;
+    if (onSanitized) onSanitized(report);
+    onProgress(18);
+  } catch (err) {
+    console.warn("Sanitização falhou, usando arquivo original:", err.message);
+    if (onSanitized) onSanitized({ error: err.message, supported: false });
+  }
+
+  // Passo 3: PUT direto no R2 com progresso real via XHR
   await new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 93) + 5);
+      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 80) + 18);
     };
     xhr.onload    = () => xhr.status === 200 ? resolve() : reject(new Error(`R2 HTTP ${xhr.status}`));
     xhr.onerror   = () => reject(new Error("Erro de rede durante o upload"));
     xhr.ontimeout = () => reject(new Error("Timeout no upload"));
     xhr.timeout   = 5 * 60 * 1000;
     xhr.open("PUT", presignedUrl);
-    xhr.setRequestHeader("Content-Type", file.type || "video/mp4");
-    xhr.send(file);
+    xhr.setRequestHeader("Content-Type", fileToUpload.type || "video/mp4");
+    xhr.send(fileToUpload);
   });
 
   onProgress(100);
@@ -477,7 +490,7 @@ export default function Warmup() {
     const entries = Array.from(newFiles).map((file) => ({
       id: `${typeId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       file, name: file.name, size: file.size,
-      status: "idle", progress: 0, url: "", error: "", typeId,
+      status: "idle", progress: 0, url: "", error: "", typeId, sanitizationReport: null,
     }));
     setFiles((prev) => ({ ...prev, [typeId]: [...(prev[typeId] || []), ...entries] }));
   }, []);
@@ -682,7 +695,7 @@ export default function Warmup() {
             ))}
           </div>
 
-          {reelFiles.length > 0 && <ReelChecklist reels={reelFiles} sanitizedIds={[]} onRemove={(id) => removeFile("reels", id)} />}
+          {reelFiles.length > 0 && <ReelChecklist reels={reelFiles} sanitizedIds={reelFiles.filter(f => f.sanitizationReport && !f.sanitizationReport.error).map(f => f.id)} onRemove={(id) => removeFile("reels", id)} />}
 
           {stats.totalDone > 0 && (
             <div style={{
