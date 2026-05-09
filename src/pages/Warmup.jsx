@@ -1,5 +1,5 @@
 // Warmup.jsx
-import { uploadFile, warmupDay, isNewAccount, buildWarmupQueue, shadowScore, fmtSize, NEW_ACCOUNT_DAYS } from "../components/warmup/WarmupUtils.js";
+import { uploadFile, warmupDay, isNewAccount, buildWarmupQueue, shadowScore, fmtSize, NEW_ACCOUNT_DAYS, WARMUP_PRESET_2D, TABS, MEDIA_TYPES } from "../components/warmup/WarmupUtils.js";
 import MediaUploadZone from "../components/warmup/WarmupMediaUploadZone.jsx";
 import AccountMonitorCard from "../components/warmup/WarmupAccountMonitorCard.jsx";
 // Foco: aquecimento rápido em 2 dias, Reels-first, proteção de contas novas
