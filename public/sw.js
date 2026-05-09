@@ -1,14 +1,9 @@
-// Service Worker — Insta Manager Scheduler v5 (com suporte a mediaUrls por ciclo)
+// Service Worker — Insta Manager Scheduler v6
+// Fix: vídeos pendentes salvos no IDB, atualizando o mesmo item do histórico
 const TICK_INTERVAL = 20000;
 
-self.addEventListener("install", (e) => {
-  // skipWaiting imediato garante que novo SW substitui versão antiga em cache
-  e.waitUntil(self.skipWaiting());
-});
-self.addEventListener("activate", (e) => {
-  e.waitUntil(self.clients.claim());
-  startTicker();
-});
+self.addEventListener("install",  (e) => { e.waitUntil(self.skipWaiting()); });
+self.addEventListener("activate", (e) => { e.waitUntil(self.clients.claim()); startTicker(); });
 
 let tickerInterval = null;
 function startTicker() {
@@ -17,54 +12,52 @@ function startTicker() {
   setTimeout(tick, 1000);
 }
 
+// ─── Tick principal ───────────────────────────────────────────────────────────
 async function tick() {
   const queue = await readQueue();
   const now   = Date.now();
 
-  // Itens normais de agendamento
+  // 1. Itens normais de agendamento (sem type)
   const due = queue.filter(
     (x) => !x.type && x.scheduledAt <= now && x.status === "pending"
   );
   for (const item of due) await runItem(item);
 
-  // Itens de finalização de vídeo (criados quando o publish retorna pending:true)
-  await runVideoFinishItems();
+  // 2. Itens video_finish (vídeos aguardando processamento do Instagram)
+  const dueFin = queue.filter(
+    (x) => x.type === "video_finish" && x.status === "pending" && x.scheduledAt <= now
+  );
+  for (const item of dueFin) await runVideoFinish(item);
 }
 
+// ─── runItem — agendamento normal ────────────────────────────────────────────
 async function runItem(item) {
   await updateItem(item.id, { status: "running" });
   notifyClients({ type: "QUEUE_UPDATE" });
 
   try {
-    const origin = self.location.origin;
-    const apiUrl = `${origin}/.netlify/functions/publish`;
-
-    // Suporte a múltiplas mídias por ciclo (novo campo mediaUrls)
-    // Retrocompatível: se não tiver mediaUrls, usa mediaUrl legado
-    const urlsToPost = item.mediaUrls && item.mediaUrls.length > 0
-      ? item.mediaUrls
-      : [item.mediaUrl];
+    const origin  = self.location.origin;
+    const apiUrl  = `${origin}/.netlify/functions/publish`;
+    const urlsToPost = item.mediaUrls?.length > 0 ? item.mediaUrls : [item.mediaUrl];
 
     let totalSuccesses = 0;
-    let totalResults = [];
+    let totalResults   = [];
 
     for (let mi = 0; mi < urlsToPost.length; mi++) {
       const mediaUrl = urlsToPost[mi];
-
-      // Pequeno delay entre mídias do mesmo ciclo (exceto a primeira)
       if (mi > 0) await sleep(3000);
 
       const res = await fetch(apiUrl, {
-        method: "POST",
+        method:  "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          accounts: item.accounts,
-          media_url: mediaUrl,
-          media_type: item.mediaType,
-          post_type: item.postType,
-          captions: item.captions || {},
-          default_caption: item.caption || "",
-          delay_seconds: 0,
+          accounts:        item.accounts,
+          media_url:       mediaUrl,
+          media_type:      item.mediaType,
+          post_type:       item.postType,
+          captions:        item.captions || {},
+          default_caption: item.caption  || "",
+          delay_seconds:   0,
         }),
       });
 
@@ -72,59 +65,68 @@ async function runItem(item) {
       const data = await res.json();
       let results = data.results || [];
 
-      // Trata vídeos com pending: true
-      // Salva no IndexedDB como "video_finish" — processado num tick futuro (60s+)
-      // NÃO usamos sleep() aqui — o SW pode ser morto pelo browser antes de terminar
-      const pendingResults = results.filter((r) => r.pending && r.creation_id);
-      if (pendingResults.length > 0) {
-        for (const pr of pendingResults) {
-          await saveVideoFinish({
-            id:          `vf-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            type:        "video_finish",
-            status:      "pending",
-            creation_id: pr.creation_id,
-            account_id:  pr.account_id,
-            username:    pr.username || "",
-            accounts:    item.accounts,
-            scheduledAt: Date.now() + 60000, // tenta 60s depois — dá tempo ao Instagram
-            parentId:    item.id,
-            mediaUrl:    mediaUrl,
-            postType:    item.postType,
-            mediaType:   item.mediaType,
-            caption:     item.caption || "",
-            createdAt:   new Date().toISOString(),
-            attempts:    0,
-            maxAttempts: 8, // 8 ticks × 20s = ~2.5 min de janela total
-          });
-          console.log(`[SW] Vídeo pendente salvo → @${pr.username} creation_id:${pr.creation_id}`);
-        }
-        // Remove pending dos resultados imediatos — o histórico será atualizado quando concluir
-        results = results.filter((r) => !r.pending);
+      // Separar contas com pending (vídeo ainda processando no Instagram)
+      const pendingResults  = results.filter((r) => r.pending && r.creation_id);
+      const finishedResults = results.filter((r) => !r.pending);
+
+      // Gera um ID fixo para este item do histórico
+      const historyId = Date.now() + mi;
+
+      // Salva video_finish para cada conta com pending
+      for (const pr of pendingResults) {
+        const vfId = `vf-${historyId}-${pr.account_id}`;
+        await saveItem("queue", {
+          id:          vfId,
+          type:        "video_finish",
+          status:      "pending",
+          creation_id: pr.creation_id,
+          account_id:  pr.account_id,
+          username:    pr.username || pr.account_id,
+          accounts:    item.accounts,
+          // Tenta pela primeira vez 60s depois — dá tempo ao Instagram processar
+          scheduledAt: Date.now() + 60000,
+          historyId,             // ← aponta para o item do histórico para atualizar
+          mediaUrl,
+          postType:    item.postType,
+          mediaType:   item.mediaType,
+          caption:     item.caption || "",
+          createdAt:   new Date().toISOString(),
+          attempts:    0,
+          maxAttempts: 8,        // 8 × 20s ≈ 2.5 min de janela total
+        });
+        console.log(`[SW] video_finish criado → @${pr.username} historyId:${historyId}`);
       }
 
-      totalResults = [...totalResults, ...results];
-      totalSuccesses += results.filter((r) => r.success).length;
+      // Salva no histórico com os resultados já finalizados + lista de pendentes
+      // O campo pending_accounts serve para o History.jsx mostrar "⏳ Processando"
+      const pendingAccounts = pendingResults.map((r) => ({
+        account_id: r.account_id,
+        username:   r.username || r.account_id,
+      }));
 
-      await appendHistory({
-        id: Date.now() + mi,
-        post_type: item.postType,
-        media_url: mediaUrl,
-        media_type: item.mediaType,
-        default_caption: item.caption || "",
-        results,
-        created_at: new Date().toISOString(),
-        from_scheduler: true,
-        cycle_index: mi,
-        cycle_total: urlsToPost.length,
+      await saveItem("history", {
+        id:               historyId,
+        post_type:        item.postType,
+        media_url:        mediaUrl,
+        media_type:       item.mediaType,
+        default_caption:  item.caption || "",
+        results:          finishedResults,
+        pending_accounts: pendingAccounts,   // contas ainda processando
+        created_at:       new Date().toISOString(),
+        from_scheduler:   true,
+        cycle_index:      mi,
+        cycle_total:      urlsToPost.length,
       });
+
+      totalResults   = [...totalResults, ...finishedResults];
+      totalSuccesses += finishedResults.filter((r) => r.success).length;
     }
 
     if (item.loop) {
-      const next = item.scheduledAt + 24 * 60 * 60 * 1000;
       await updateItem(item.id, {
-        status: "pending",
-        scheduledAt: next,
-        runCount: (item.runCount || 0) + 1,
+        status:      "pending",
+        scheduledAt: item.scheduledAt + 24 * 60 * 60 * 1000,
+        runCount:    (item.runCount || 0) + 1,
         lastResults: totalResults,
       });
     } else {
@@ -133,15 +135,16 @@ async function runItem(item) {
 
     try {
       if (Notification.permission === "granted") {
-        const qty = urlsToPost.length;
+        const qty   = urlsToPost.length;
         const label = qty > 1 ? `${qty} mídias` : "1 mídia";
         self.registration.showNotification("Insta Manager", {
-          body: `✅ ${label} · ${totalSuccesses}/${totalResults.length} conta(s) publicadas`,
+          body: `✅ ${label} · ${totalSuccesses}/${totalResults.length} conta(s)`,
           icon: "/favicon.ico",
-          tag: `pub-${item.id}`,
+          tag:  `pub-${item.id}`,
         });
       }
     } catch (_) {}
+
   } catch (err) {
     await updateItem(item.id, { status: "error", error: err.message });
     try {
@@ -149,7 +152,7 @@ async function runItem(item) {
         self.registration.showNotification("Insta Manager — Erro", {
           body: `❌ ${err.message}`,
           icon: "/favicon.ico",
-          tag: `err-${item.id}`,
+          tag:  `err-${item.id}`,
         });
       }
     } catch (_) {}
@@ -158,32 +161,8 @@ async function runItem(item) {
   notifyClients({ type: "QUEUE_UPDATE" });
 }
 
-// ─── Salva item video_finish no IndexedDB ────────────────────────────────────
-async function saveVideoFinish(item) {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction("queue", "readwrite");
-    tx.objectStore("queue").put(item);
-    tx.oncomplete = resolve;
-    tx.onerror = reject;
-  });
-}
-
-// ─── Processa items video_finish pendentes no tick ────────────────────────────
-// Chamada a cada tick — encontra itens tipo "video_finish" com scheduledAt <= now
-async function runVideoFinishItems() {
-  const queue = await readQueue();
-  const now   = Date.now();
-  const due   = queue.filter(
-    (x) => x.type === "video_finish" && x.status === "pending" && x.scheduledAt <= now
-  );
-  for (const item of due) {
-    await runVideoFinish(item);
-  }
-}
-
+// ─── runVideoFinish — finaliza vídeos pendentes ───────────────────────────────
 async function runVideoFinish(item) {
-  // Marca como running para não processar duas vezes
   await updateItem(item.id, { status: "running" });
 
   const origin = self.location.origin;
@@ -192,32 +171,35 @@ async function runVideoFinish(item) {
     const res = await fetch(`${origin}/.netlify/functions/publish-finish`, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({
+      body: JSON.stringify({
         pending:  [{ account_id: item.account_id, creation_id: item.creation_id, username: item.username }],
         accounts: item.accounts,
       }),
     });
 
     if (!res.ok) throw new Error(`publish-finish HTTP ${res.status}`);
-    const data    = await res.json();
-    const results = data.results || [];
-    const result  = results[0];
+    const data   = await res.json();
+    const result = (data.results || [])[0];
 
     if (result?.success) {
-      // Sucesso — salva no histórico e remove da fila
-      await appendHistory({
-        id:             Date.now(),
-        post_type:      item.postType,
-        media_url:      item.mediaUrl,
-        media_type:     item.mediaType,
-        default_caption: item.caption,
-        results:        [result],
-        created_at:     new Date().toISOString(),
-        from_scheduler: true,
-        video_finish:   true,
-      });
+      // ── Sucesso: atualiza o item do histórico (não cria um novo) ──────────
+      const histEntry = await getHistoryItem(item.historyId);
+      if (histEntry) {
+        // Adiciona esta conta nos results e remove dos pending_accounts
+        const updatedResults  = [...(histEntry.results || []), result];
+        const updatedPending  = (histEntry.pending_accounts || []).filter(
+          (a) => a.account_id !== item.account_id
+        );
+        await saveItem("history", {
+          ...histEntry,
+          results:          updatedResults,
+          pending_accounts: updatedPending,
+        });
+      }
+
+      // Remove da fila de video_finish
       await updateItem(item.id, { status: "done", result, finishedAt: new Date().toISOString() });
-      console.log(`[SW] video_finish OK — @${item.username} media_id:${result.media_id}`);
+      console.log(`[SW] video_finish ✅ @${item.username} media_id:${result.media_id}`);
 
       notifyClients({ type: "QUEUE_UPDATE" });
 
@@ -232,19 +214,47 @@ async function runVideoFinish(item) {
       } catch (_) {}
 
     } else if (result && !result.success) {
-      // Erro definitivo do Instagram — não tenta mais
+      // ── Erro definitivo do Instagram ──────────────────────────────────────
       const errMsg = result.error || "Erro desconhecido";
-      console.warn(`[SW] video_finish FALHOU — @${item.username}: ${errMsg}`);
+      console.warn(`[SW] video_finish ❌ @${item.username}: ${errMsg}`);
+
+      // Atualiza histórico: move da lista pending_accounts para results com erro
+      const histEntry = await getHistoryItem(item.historyId);
+      if (histEntry) {
+        const updatedResults = [...(histEntry.results || []), {
+          account_id: item.account_id,
+          username:   item.username,
+          success:    false,
+          error:      errMsg,
+        }];
+        const updatedPending = (histEntry.pending_accounts || []).filter(
+          (a) => a.account_id !== item.account_id
+        );
+        await saveItem("history", { ...histEntry, results: updatedResults, pending_accounts: updatedPending });
+      }
+
       await updateItem(item.id, { status: "error", error: errMsg });
       notifyClients({ type: "QUEUE_UPDATE" });
 
     } else {
-      // Sem resultado — reagenda para daqui a 30s se ainda tiver tentativas
+      // ── Ainda não está pronto — reagenda ─────────────────────────────────
       const attempts = (item.attempts || 0) + 1;
       if (attempts >= item.maxAttempts) {
-        await updateItem(item.id, { status: "error", error: `Timeout: vídeo não processou após ${attempts} tentativas` });
+        const errMsg = `Timeout: vídeo não processou após ${attempts} tentativas`;
+        const histEntry = await getHistoryItem(item.historyId);
+        if (histEntry) {
+          const updatedResults = [...(histEntry.results || []), {
+            account_id: item.account_id, username: item.username, success: false, error: errMsg,
+          }];
+          const updatedPending = (histEntry.pending_accounts || []).filter(
+            (a) => a.account_id !== item.account_id
+          );
+          await saveItem("history", { ...histEntry, results: updatedResults, pending_accounts: updatedPending });
+        }
+        await updateItem(item.id, { status: "error", error: errMsg });
         notifyClients({ type: "QUEUE_UPDATE" });
       } else {
+        // Ainda há tentativas — reagenda para 30s depois
         await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + 30000 });
       }
     }
@@ -255,12 +265,12 @@ async function runVideoFinish(item) {
       await updateItem(item.id, { status: "error", error: err.message });
       notifyClients({ type: "QUEUE_UPDATE" });
     } else {
-      // Falha de rede — tenta novamente no próximo tick
       await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + 20000 });
     }
   }
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // DB version deve ser SEMPRE igual ao useDB.js — atualmente v5
@@ -293,55 +303,65 @@ function openDB() {
       _db.onerror = () => { _db = null; };
       resolve(_db);
     };
-    req.onerror = () => reject(req.error);
-    req.onblocked = () => {
-      // Outra aba com versão antiga aberta — avisa e aguarda
-      console.warn("[SW] IDB bloqueado por outra aba. Aguardando...");
-    };
+    req.onerror  = () => reject(req.error);
+    req.onblocked = () => console.warn("[SW] IDB bloqueado por outra aba.");
   });
 }
 
 async function readQueue() {
   const db = await openDB();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction("queue", "readonly");
+    const tx  = db.transaction("queue", "readonly");
     const req = tx.objectStore("queue").getAll();
     req.onsuccess = () => resolve(req.result || []);
-    req.onerror = () => reject(req.error);
+    req.onerror   = () => reject(req.error);
   });
 }
 
 async function updateItem(id, patch) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction("queue", "readwrite");
+    const tx    = db.transaction("queue", "readwrite");
     const store = tx.objectStore("queue");
-    const req = store.get(id);
+    const req   = store.get(id);
     req.onsuccess = () => {
       if (!req.result) return resolve();
       store.put({ ...req.result, ...patch });
       tx.oncomplete = resolve;
-      tx.onerror = reject;
+      tx.onerror    = reject;
     };
     req.onerror = reject;
   });
 }
 
-async function appendHistory(entry) {
+// Salva (put) em qualquer store
+async function saveItem(store, item) {
   const db = await openDB();
   return new Promise((resolve, reject) => {
-    const tx = db.transaction("history", "readwrite");
-    tx.objectStore("history").put(entry);
+    const tx = db.transaction(store, "readwrite");
+    tx.objectStore(store).put(item);
     tx.oncomplete = resolve;
-    tx.onerror = reject;
+    tx.onerror    = reject;
+  });
+}
+
+// Busca item do histórico por id
+async function getHistoryItem(id) {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx  = db.transaction("history", "readonly");
+    const req = tx.objectStore("history").get(id);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror   = () => reject(req.error);
   });
 }
 
 function notifyClients(msg) {
-  self.clients.matchAll({ includeUncontrolled: true }).then((cs) => cs.forEach((c) => c.postMessage(msg)));
+  self.clients.matchAll({ includeUncontrolled: true })
+    .then((cs) => cs.forEach((c) => c.postMessage(msg)));
 }
 
 self.addEventListener("message", (e) => {
-  if (e.data?.type === "PING") e.source?.postMessage({ type: "PONG" });
+  if (e.data?.type === "PING")       e.source?.postMessage({ type: "PONG" });
   if (e.data?.type === "FORCE_TICK") tick();
 });
