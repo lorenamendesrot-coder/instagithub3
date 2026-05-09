@@ -23,7 +23,7 @@ export function isNewAccount(acc) {
 }
 
 // Upload direto do browser para R2 via presigned URL — sem limite de tamanho
-async function uploadFile(file, onProgress, onSanitized) {
+export async function uploadFile(file, onProgress, onSanitized) {
   onProgress(2);
 
   // Passo 1: obter presigned URL
