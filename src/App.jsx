@@ -72,7 +72,70 @@ function SchedulerProvider({ addEntry, children }) {
     const tick = async () => {
       const all = await dbGetAll("queue");
       const now = Date.now();
-      const due = all.filter((x) => x.scheduledAt <= now && x.status === "pending");
+      const due = all.filter((x) => !x.type && x.scheduledAt <= now && x.status === "pending");
+      const dueFin = all.filter((x) => x.type === "video_finish" && x.status === "pending" && x.scheduledAt <= now);
+
+      // Processar video_finish (fallback quando o SW não está ativo)
+      for (const vf of dueFin) {
+        if (runningRef.current.has(vf.id)) continue;
+        runningRef.current.add(vf.id);
+        await dbPut("queue", { ...vf, status: "running" });
+        try {
+          const res = await fetch("/.netlify/functions/publish-finish", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              pending:  [{ account_id: vf.account_id, creation_id: vf.creation_id, username: vf.username }],
+              accounts: vf.accounts,
+            }),
+          });
+          if (!res.ok) throw new Error(`publish-finish HTTP ${res.status}`);
+          const data   = await res.json();
+          const result = (data.results || [])[0];
+          if (result?.success) {
+            const histEntry = await (async () => {
+              const all2 = await dbGetAll("history");
+              return all2.find((h) => h.id === vf.historyId) || null;
+            })();
+            if (histEntry) {
+              const prevResults    = (histEntry.results || []).filter((r) => r.account_id !== vf.account_id);
+              const updatedResults = [...prevResults, result];
+              const updatedPending = (histEntry.pending_accounts || []).filter((a) => a.account_id !== vf.account_id);
+              await dbPut("history", { ...histEntry, results: updatedResults, pending_accounts: updatedPending });
+            }
+            await dbPut("queue", { ...vf, status: "done", result, finishedAt: new Date().toISOString() });
+          } else if (result && !result.success) {
+            const histEntry = await (async () => {
+              const all2 = await dbGetAll("history");
+              return all2.find((h) => h.id === vf.historyId) || null;
+            })();
+            if (histEntry) {
+              const updatedResults = [...(histEntry.results || []), { account_id: vf.account_id, username: vf.username, success: false, error: result.error }];
+              const updatedPending = (histEntry.pending_accounts || []).filter((a) => a.account_id !== vf.account_id);
+              await dbPut("history", { ...histEntry, results: updatedResults, pending_accounts: updatedPending });
+            }
+            await dbPut("queue", { ...vf, status: "error", error: result.error });
+          } else {
+            // Ainda processando — reagenda
+            const attempts = (vf.attempts || 0) + 1;
+            if (attempts >= (vf.maxAttempts || 8)) {
+              await dbPut("queue", { ...vf, status: "error", error: "Timeout: vídeo não processou" });
+            } else {
+              await dbPut("queue", { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 30000 });
+            }
+          }
+        } catch (err) {
+          const attempts = (vf.attempts || 0) + 1;
+          if (attempts >= (vf.maxAttempts || 8)) {
+            await dbPut("queue", { ...vf, status: "error", error: err.message });
+          } else {
+            await dbPut("queue", { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 20000 });
+          }
+        }
+        runningRef.current.delete(vf.id);
+        reload();
+      }
+
       if (!due.length) return;
 
       for (const item of due) {
@@ -121,13 +184,48 @@ function SchedulerProvider({ addEntry, children }) {
             const data = await res.json();
             const results = data.results || [];
 
+            // Separar contas com vídeo ainda processando das já finalizadas
+            const pendingResults  = results.filter((r) => r.pending && r.creation_id);
+            const finishedResults = results.filter((r) => !r.pending);
+
+            const historyId = `h-${Date.now()}-${mi}`;
+
+            // Para cada conta com vídeo pendente, criar item video_finish na fila
+            for (const pr of pendingResults) {
+              const vfId = `vf-${historyId}-${pr.account_id}`;
+              await dbPut("queue", {
+                id:          vfId,
+                type:        "video_finish",
+                status:      "pending",
+                creation_id: pr.creation_id,
+                account_id:  pr.account_id,
+                username:    pr.username || pr.account_id,
+                accounts:    item.accounts,
+                scheduledAt: Date.now() + 60000,
+                historyId,
+                mediaUrl,
+                postType:    item.postType,
+                mediaType:   item.mediaType,
+                caption:     item.caption || "",
+                createdAt:   new Date().toISOString(),
+                attempts:    0,
+                maxAttempts: 8,
+              });
+            }
+
+            const pendingAccounts = pendingResults.map((r) => ({
+              account_id: r.account_id,
+              username:   r.username || r.account_id,
+            }));
+
             await addEntry({
-              id: Date.now() + mi,
+              id: historyId,
               post_type: item.postType,
               media_url: mediaUrl,
               media_type: item.mediaType,
               default_caption: item.caption,
-              results,
+              results: finishedResults,
+              pending_accounts: pendingAccounts,
               created_at: new Date().toISOString(),
               from_scheduler: true,
             });
