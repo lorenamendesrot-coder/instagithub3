@@ -87,8 +87,8 @@ function recordPost(id, ok) {
 
 // ─── Polling do container de vídeo ───────────────────────────────────────────
 async function waitForContainer(id, token) {
-  for (let i = 0; i < 5; i++) {
-    await sleep(4000);
+  for (let i = 0; i < 4; i++) {
+    await sleep(5000);
     try {
       const r = await fetch(`${GRAPH}/${id}?fields=status_code&access_token=${token}`);
       const d = await r.json();
