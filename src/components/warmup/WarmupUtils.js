@@ -4,6 +4,61 @@ import { sanitizeFile } from "../../sanitizeClient.js";
 export const JITTER_MIN_RANGE = [-40, 40];
 export const JITTER_SEC_RANGE = [0, 59];
 export const NEW_ACCOUNT_DAYS = 2;
+export const WARMUP_PRESET_2D = {
+  id:    "fast2d",
+  label: "Aquecimento Rápido 2 Dias 🚀",
+  desc:  "Foco em Reels com Feed e Stories complementares. Alta proteção de conta.",
+  days: [
+    {
+      day: 1,
+      label: "Dia 1 — Arranque Suave",
+      reels:   3,
+      feed:    1,
+      stories: 2,
+      windowStart: "09:00",
+      windowEnd:   "21:30",
+      intervalMinMin: 90,
+      intervalMinMax: 150,
+    },
+    {
+      day: 2,
+      label: "Dia 2 — Aceleração",
+      reels:   5,
+      feed:    2,
+      stories: 3,
+      windowStart: "09:00",
+      windowEnd:   "21:30",
+      intervalMinMin: 60,
+      intervalMinMax: 120,
+    },
+    {
+      day: 3,
+      label: "Dia 3 — Manutenção de Nível",
+      reels:   4,
+      feed:    2,
+      stories: 3,
+      windowStart: "09:00",
+      windowEnd:   "21:30",
+      intervalMinMin: 70,
+      intervalMinMax: 130,
+    },
+  ],
+};
+
+export const TABS = [
+  { id: "upload",   icon: "📤", label: "Upload"          },
+  { id: "captions", icon: "💬", label: "Legendas"        },
+  { id: "config",   icon: "⚙️",  label: "Configuração"   },
+  { id: "preview",  icon: "📅", label: "Preview da Fila" },
+  { id: "monitor",  icon: "📊", label: "Monitor"         },
+];
+
+export const MEDIA_TYPES = [
+  { id: "reels",   icon: "🎬", label: "Reels",   accept: "video/*",         hint: "MP4, MOV · 8–90s recomendado",         postType: "REEL",  mediaType: "VIDEO" },
+  { id: "feed",    icon: "🖼",  label: "Feed",    accept: "image/*,video/*", hint: "JPG, PNG, MP4 · fotos e carrosséis",   postType: "FEED",  mediaType: "IMAGE" },
+  { id: "stories", icon: "⭕",  label: "Stories", accept: "image/*,video/*", hint: "Vertical 9:16 · até 15s para vídeo",  postType: "STORY", mediaType: "IMAGE" },
+];
+
 
 // ─── Utilitários ──────────────────────────────────────────────────────────────
 
