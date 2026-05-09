@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useAccounts, useHistory } from "../App.jsx";
+import { useAccounts, useHistory, useScheduler } from "../App.jsx";
 import MediaPreview from "../MediaPreview.jsx";
 import Modal from "../Modal.jsx";
 import CatboxUploader from "../CatboxUploader.jsx";
@@ -35,121 +35,6 @@ function shuffle(arr) {
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
-}
-
-function useScheduler(addEntry) {
-  const [queue, setQueue] = useState([]);
-  const runningRef = useRef(new Set());
-
-  const reload = useCallback(async () => {
-    const all = await dbGetAll("queue");
-    all.sort((a, b) => a.scheduledAt - b.scheduledAt);
-    setQueue(all);
-  }, []);
-
-  useEffect(() => {
-    reload();
-    const h = () => reload();
-    window.addEventListener("sw:queue-update", h);
-    return () => window.removeEventListener("sw:queue-update", h);
-  }, []);
-
-  useEffect(() => {
-    const tick = async () => {
-      const all = await dbGetAll("queue");
-      const now = Date.now();
-      const due = all.filter((x) => x.scheduledAt <= now && x.status === "pending");
-      if (!due.length) return;
-
-      for (const item of due) {
-        if (runningRef.current.has(item.id)) continue;
-        runningRef.current.add(item.id);
-        await dbPut("queue", { ...item, status: "running" });
-        reload();
-
-        try {
-          const urlsToPost = item.mediaUrls || [item.mediaUrl];
-
-          for (let mi = 0; mi < urlsToPost.length; mi++) {
-            const mediaUrl = urlsToPost[mi];
-            if (mi > 0) await new Promise(r => setTimeout(r, 3000));
-
-            // Retry com backoff exponencial: 3 tentativas, esperas de 5s → 15s → 45s
-            const MAX_RETRIES = 3;
-            let res, lastErr;
-            for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-              if (attempt > 0) {
-                const waitMs = 5000 * Math.pow(3, attempt - 1);
-                console.log(`[scheduler] retry ${attempt + 1}/${MAX_RETRIES} para item ${item.id}, aguardando ${waitMs / 1000}s`);
-                await new Promise(r => setTimeout(r, waitMs));
-              }
-              try {
-                res = await fetch("/.netlify/functions/publish", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    accounts: item.accounts,
-                    media_url: mediaUrl,
-                    media_type: item.mediaType,
-                    post_type: item.postType,
-                    captions: item.captions || {},
-                    default_caption: item.caption || "",
-                    delay_seconds: 0,
-                  }),
-                });
-                // Erros 4xx são definitivos (não retentar); 5xx e erros de rede → retry
-                if (res.ok || (res.status >= 400 && res.status < 500)) break;
-                lastErr = new Error(`HTTP ${res.status}`);
-              } catch (fetchErr) {
-                lastErr = fetchErr;
-                res = null;
-              }
-            }
-
-            if (!res || !res.ok) throw lastErr || new Error(`HTTP ${res?.status}`);
-            const data = await res.json();
-            const results = data.results || [];
-
-            await addEntry({
-              id: Date.now() + mi,
-              post_type: item.postType,
-              media_url: mediaUrl,
-              media_type: item.mediaType,
-              default_caption: item.caption,
-              results,
-              created_at: new Date().toISOString(),
-              from_scheduler: true,
-            });
-          }
-
-          if (item.loop) {
-            await dbPut("queue", {
-              ...item, status: "pending",
-              scheduledAt: item.scheduledAt + 86400000,
-              runCount: (item.runCount || 0) + 1,
-            });
-          } else {
-            await dbPut("queue", { ...item, status: "done" });
-          }
-        } catch (err) {
-          await dbPut("queue", { ...item, status: "error", error: err.message, failedAt: new Date().toISOString(), retryCount: (item.retryCount || 0) + 1 });
-        }
-
-        runningRef.current.delete(item.id);
-        reload();
-      }
-    };
-
-    const iv = setInterval(tick, 10000);
-    tick();
-    return () => clearInterval(iv);
-  }, [addEntry]);
-
-  const addBatch   = async (b) => { await dbPutMany("queue", b); reload(); };
-  const updateItem = async (item) => { await dbPut("queue", item); reload(); };
-  const removeItem = async (id) => { await dbDelete("queue", id); setQueue((p) => p.filter((x) => x.id !== id)); };
-  const clearQueue = async () => { await dbClear("queue"); setQueue([]); };
-  return { queue, addBatch, updateItem, removeItem, clearQueue, reload };
 }
 
 function AccountPicker({ accounts, selectedIds, onToggle, onSelectAll, onClear }) {
@@ -217,7 +102,7 @@ function CycleBadge({ count }) {
 export default function Schedule() {
   const { accounts } = useAccounts();
   const { addEntry }  = useHistory();
-  const { queue, addBatch, updateItem, removeItem, clearQueue } = useScheduler(addEntry);
+  const { queue, addBatch, updateItem, removeItem, clearQueue } = useScheduler();
 
   const [postType,    setPostType]    = useState("FEED");
   const [mediaType,   setMediaType]   = useState("IMAGE");
@@ -437,7 +322,23 @@ export default function Schedule() {
   const doneCount    = queue.filter((q) => q.status === "done").length;
   const errorCount   = queue.filter((q) => q.status === "error").length;
 
-  const previewDist = () => {
+  return (
+    <div className="page">
+      <div className="page-header">
+        <div>
+          <div className="page-title">🗓 Agendar</div>
+          <div className="page-subtitle">
+            {pendingCount} agendado(s) na fila · {doneCount} publicado(s)
+            {errorCount > 0 && <span style={{ color: "var(--danger)", marginLeft: 6 }}>· {errorCount} erro(s)</span>}
+          </div>
+        </div>
+        <a href="/fila" style={{ fontSize: 12, padding: "7px 14px", borderRadius: 8, border: "1px solid var(--border)", color: "var(--muted)", textDecoration: "none", display: "flex", alignItems: "center", gap: 5 }}>
+          🗂 Ver fila {pendingCount > 0 && <span className="badge badge-info" style={{ fontSize: 10 }}>{pendingCount}</span>}
+        </a>
+      </div>
+
+      <div className="schedule-grid">
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
     const urls = validUrls.map((x) => x.url.trim());
     if (!urls.length || !selectedAccounts.length) return [];
     const qty = Math.max(1, quantityPerCycle);
@@ -833,126 +734,7 @@ export default function Schedule() {
           </button>
         </div>
 
-        {/* ── Fila ── */}
-        <div>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
-            Fila de agendamentos
-            {pendingCount > 0 && <span className="badge badge-info">{pendingCount}</span>}
-          </div>
-
-          {queue.length === 0 ? (
-            <div className="card" style={{ textAlign: "center", padding: "36px 20px", color: "var(--muted)" }}>
-              <div style={{ fontSize: 30, marginBottom: 12 }}>◷</div>
-              <div style={{ fontWeight: 500, color: "var(--text)", marginBottom: 6 }}>Fila vazia</div>
-              <div style={{ fontSize: 12 }}>Agendamentos aparecem aqui em tempo real.</div>
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-              {queue.map((item) => {
-                const info = STATUS_INFO[item.status] || STATUS_INFO.pending;
-                const scheduledDate = new Date(item.scheduledAt);
-                const isPast = item.scheduledAt < Date.now();
-                const thumbUrl = item.mediaType === "IMAGE" ? item.mediaUrl : null;
-                const qty = item.quantityPerCycle || 1;
-                const mediaCount = item.mediaUrls?.length || 1;
-
-                return (
-                  <div key={item.id} style={{ background: info.bg, border: `1px solid ${info.color}28`, borderLeft: `3px solid ${info.color}`, borderRadius: 10, padding: "9px 11px" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      {thumbUrl ? (
-                        <img src={thumbUrl} alt="" style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover", flexShrink: 0, border: "1px solid var(--border)" }}
-                          onError={(e) => { e.target.style.display = "none"; }} />
-                      ) : (
-                        <div style={{ width: 36, height: 36, borderRadius: 6, background: "var(--bg3)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, position: "relative" }}>
-                          🎬
-                          {mediaCount > 1 && (
-                            <span style={{ position: "absolute", top: -4, right: -4, background: "var(--accent)", color: "#fff", fontSize: 8, fontWeight: 700, borderRadius: 8, padding: "1px 4px", lineHeight: 1.2 }}>
-                              ×{mediaCount}
-                            </span>
-                          )}
-                        </div>
-                      )}
-
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 3, flexWrap: "wrap" }}>
-                          <span style={{ fontSize: 10, fontWeight: 700, color: info.color }}>{item.status === "running" ? "⟳ " : ""}{info.label.toUpperCase()}</span>
-                          <span style={{ fontSize: 10, color: "var(--muted)", background: "var(--bg3)", padding: "1px 6px", borderRadius: 4 }}>{item.postType}</span>
-                          <span style={{ fontSize: 10, color: "var(--muted)" }}>{item.mediaType === "IMAGE" ? "🖼" : "🎬"}</span>
-                          {qty > 1 && (
-                            <span style={{ fontSize: 9, fontWeight: 700, color: "var(--accent-light)", background: "#7c5cfc20", border: "1px solid var(--accent)", padding: "0 5px", borderRadius: 8 }}>
-                              ×{qty}/ciclo
-                            </span>
-                          )}
-                          {item.loop && <span style={{ fontSize: 9, color: "var(--accent-light)" }}>🔁</span>}
-                          {item.runCount > 0 && <span style={{ fontSize: 9, color: "var(--muted)" }}>run×{item.runCount}</span>}
-                          <span style={{ fontSize: 10, color: isPast && item.status === "pending" ? "var(--warning)" : "var(--muted)", marginLeft: "auto" }}>
-                            🕐 {scheduledDate.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
-                            {isPast && item.status === "pending" && " ⚠"}
-                          </span>
-                        </div>
-
-                        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                          <div style={{ display: "flex" }}>
-                            {(item.accounts || []).slice(0, 5).map((a, i) => (
-                              <div key={a.id} title={`@${a.username}`} style={{ marginLeft: i > 0 ? -6 : 0, zIndex: 5 - i, position: "relative" }}>
-                                {a.profile_picture
-                                  ? <img src={a.profile_picture} alt="" style={{ width: 16, height: 16, borderRadius: "50%", objectFit: "cover", border: "1.5px solid var(--bg2)" }} />
-                                  : <div style={{ width: 16, height: 16, borderRadius: "50%", background: "linear-gradient(135deg, var(--accent), #9b4dfc)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, color: "#fff", fontWeight: 700, border: "1.5px solid var(--bg2)" }}>
-                                      {(a.username || "?")[0].toUpperCase()}
-                                    </div>}
-                              </div>
-                            ))}
-                            {(item.accounts || []).length > 5 && <span style={{ fontSize: 9, color: "var(--muted)", marginLeft: 4 }}>+{item.accounts.length - 5}</span>}
-                          </div>
-                          <span style={{ fontSize: 10, color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-                            {mediaCount > 1 ? `${mediaCount} mídias agrupadas` : item.mediaUrl?.split("/").pop()}
-                          </span>
-                        </div>
-
-                        {item.error && <div style={{ fontSize: 10, color: "var(--danger)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>✗ {item.error}</div>}
-                      </div>
-
-                      <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
-                        {(item.status === "pending" || item.status === "error") && (
-                          <button className="btn btn-ghost btn-xs" onClick={() => openEdit(item)} title="Editar" style={{ padding: "3px 7px", fontSize: 12 }}>✎</button>
-                        )}
-                        <button className="btn btn-ghost btn-xs" style={{ color: "var(--danger)", padding: "3px 7px", fontSize: 12 }}
-                          onClick={() => setConfirmModal({ type: "removeItem", id: item.id })} title="Remover">✕</button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
       </div>
-
-      {/* Modal edição */}
-      {editModal && (
-        <div onClick={() => setEditModal(null)} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--bg2)", border: "1px solid var(--border2)", borderRadius: 16, padding: 28, width: "100%", maxWidth: 440, boxShadow: "0 24px 80px rgba(0,0,0,0.5)" }}>
-            <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 18 }}>✎ Editar agendamento</div>
-            <div className="form-row">
-              <label>Novo horário</label>
-              <input type="datetime-local" value={editTime} onChange={(e) => setEditTime(e.target.value)} />
-            </div>
-            <div className="form-row">
-              <label>Legenda</label>
-              <textarea value={editCaption} onChange={(e) => setEditCaption(e.target.value)} style={{ minHeight: 80, fontSize: 13 }} />
-            </div>
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <button className="btn btn-ghost btn-sm" onClick={() => setEditModal(null)}>Cancelar</button>
-              <button className="btn btn-primary btn-sm" onClick={saveEdit}>Salvar</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <Modal open={confirmModal?.type === "clearQueue"} title="Limpar fila?" message="Todos os agendamentos pendentes serão removidos." confirmLabel="Limpar fila" confirmDanger
-        onConfirm={() => { clearQueue(); setConfirmModal(null); }} onCancel={() => setConfirmModal(null)} />
-      <Modal open={confirmModal?.type === "removeItem"} title="Remover agendamento?" message="Este item será removido da fila." confirmLabel="Remover" confirmDanger
-        onConfirm={() => { removeItem(confirmModal.id); setConfirmModal(null); }} onCancel={() => setConfirmModal(null)} />
 
       <style>{`
         @media (max-width: 900px) { .schedule-grid { grid-template-columns: 1fr !important; } }
