@@ -217,6 +217,23 @@ function ReelCard({ reel, sanitized, sanitizeReport, onRemove }) {
         </div>
       )}
 
+      {/* Detalhes de sanitização */}
+      {sanitized && sanitizeReport && !sanitizeReport.error && (
+        <div style={{ marginTop: 8, padding: "8px 12px", borderRadius: 8, background: "rgba(34,197,94,0.05)", border: "1px solid rgba(34,197,94,0.15)", fontSize: 11 }}>
+          <div style={{ color: "var(--success)", fontWeight: 600, marginBottom: 4 }}>🔒 Metadados removidos</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 4 }}>
+            {(sanitizeReport.removed || []).map((r, i) => (
+              <span key={i} style={{ padding: "1px 7px", borderRadius: 4, background: "rgba(34,197,94,0.08)", color: "var(--success)", border: "1px solid rgba(34,197,94,0.15)" }}>{r}</span>
+            ))}
+          </div>
+          <div style={{ color: "var(--muted)" }}>
+            ID: <span style={{ fontFamily: "monospace", color: "var(--text)" }}>{sanitizeReport.uniqueId}</span>
+            {" · "}{sanitizeReport.durationMs}ms
+            {" · "}{(sanitizeReport.originalSize/1024).toFixed(0)}KB → {(sanitizeReport.sanitizedSize/1024).toFixed(0)}KB
+          </div>
+        </div>
+      )}
+
       {/* Issues */}
       {risk?.issues?.length > 0 && !analyzing && (
         <div style={{ marginTop: 8 }}>
