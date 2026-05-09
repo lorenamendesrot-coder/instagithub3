@@ -25,7 +25,18 @@ export default function Warmup() {
   const [useNewOnly,   setUseNewOnly]   = useState(true);
   const [selectedAccIds, setSelectedAccIds] = useState(null); // null = todas selecionadas
   const [urlInputs,    setUrlInputs]    = useState({ reels: "", feed: "", stories: "" });
-  const [dayConfig,       setDayConfig]       = useState(WARMUP_PRESET_2D.days);
+  const [dayConfig, setDayConfig] = useState(() => {
+    // PRESET_VERSION garante que mudanças nos defaults sobrescrevem estados antigos
+    const PRESET_VERSION = "v2-10-20-30";
+    try {
+      const saved = sessionStorage.getItem("warmup_dayConfig_version");
+      if (saved !== PRESET_VERSION) {
+        sessionStorage.setItem("warmup_dayConfig_version", PRESET_VERSION);
+        return WARMUP_PRESET_2D.days;
+      }
+    } catch (_) {}
+    return WARMUP_PRESET_2D.days;
+  });
   const [selectedDays,    setSelectedDays]    = useState(() => WARMUP_PRESET_2D.days.map((d) => d.day)); // dias ativos
   const [loopEnabled,     setLoopEnabled]     = useState(false);
   const [loopDays,        setLoopDays]        = useState(7); // quantos dias extras em loop
