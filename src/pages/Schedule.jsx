@@ -233,7 +233,7 @@ export default function Schedule() {
   const toggleAcc = (id) => setSelectedIds((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
   const selectAll = () => setSelectedIds(accounts.map((a) => a.id));
   const clearAll  = () => setSelectedIds([]);
-  const addUrl    = () => setUrlList((p) => [...p, { id: Date.now(), url: "", type: isReel ? "VIDEO" : mediaType }]);
+  const addUrl    = () => setUrlList((p) => [...p, { id: Date.now(), url: "", type: isReel ? "VIDEO" : mediaType, name: "", sanitizationReport: null }]);
   const removeUrl = (id) => setUrlList((p) => p.filter((x) => x.id !== id));
   const setUrl    = (id, v) => setUrlList((p) => p.map((x) => x.id === id ? { ...x, url: v } : x));
 
@@ -244,7 +244,14 @@ export default function Schedule() {
   useEffect(() => { setStartTime(nowPlus(1)); }, []);
 
   const handleCatboxUrls = (items) => {
-    const newEntries = items.map((item, i) => ({ id: Date.now() + i, url: item.url, type: item.type }));
+    // Preserva sanitizationReport de cada item vindo do CatboxUploader
+    const newEntries = items.map((item, i) => ({
+      id:                 Date.now() + i,
+      url:                item.url,
+      type:               item.type,
+      name:               item.name || item.url.split("/").pop(),
+      sanitizationReport: item.sanitizationReport || null,
+    }));
     setUrlList((p) => {
       const nonEmpty = p.filter((x) => x.url.trim());
       return nonEmpty.length === 0 ? newEntries : [...nonEmpty, ...newEntries];
@@ -258,14 +265,20 @@ export default function Schedule() {
   const handleBulkUrls = () => {
     const urls = bulkUrlText.split(/[\n,]/).map((u) => u.trim()).filter((u) => u.startsWith("http"));
     if (!urls.length) return;
-    const newEntries = urls.map((url, i) => ({ id: Date.now() + i, url, type: isReel ? "VIDEO" : mediaType }));
+    const newEntries = urls.map((url, i) => ({
+      id:                 Date.now() + i,
+      url,
+      type:               isReel ? "VIDEO" : mediaType,
+      name:               url.split("/").pop().split("?")[0] || "url",
+      sanitizationReport: null, // URLs manuais não passam por sanitização local
+    }));
     setUrlList((p) => {
       const nonEmpty = p.filter((x) => x.url.trim());
       return [...nonEmpty, ...newEntries];
     });
     setBulkUrlText("");
-    setMediaMode("upload");
-  };;
+    setShowBulkUrl(false);
+  };
 
   // ── Lógica de geração da fila com suporte a quantityPerCycle ──
   // Parseia bulk captions
@@ -515,10 +528,58 @@ export default function Schedule() {
               </div>
             )}
 
-            {/* Contador de URLs adicionadas */}
+            {/* Lista de URLs adicionadas com badges de sanitização */}
             {validUrls.length > 0 && (
-              <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
-                ✓ {validUrls.length} URL{validUrls.length > 1 ? "s" : ""} adicionada{validUrls.length > 1 ? "s" : ""}
+              <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 8 }}>
+                {validUrls.map((entry, idx) => {
+                  const rep = entry.sanitizationReport;
+                  return (
+                    <div key={entry.id} style={{
+                      padding: "7px 10px", borderRadius: 8, fontSize: 11,
+                      background: rep && !rep.error ? "rgba(34,197,94,0.04)" : "var(--bg3)",
+                      border: `1px solid ${rep && !rep.error ? "rgba(34,197,94,0.18)" : "var(--border)"}`,
+                      display: "flex", flexDirection: "column", gap: 4,
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ fontSize: 12, flexShrink: 0 }}>{entry.type === "VIDEO" ? "🎬" : "🖼"}</span>
+                        <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text)", fontWeight: 500 }}>
+                          {entry.name || entry.url.split("/").pop()}
+                        </span>
+                        <button
+                          onClick={() => { setPreviewIdx(idx); }}
+                          style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: previewIdx === idx ? "rgba(124,92,252,0.15)" : "var(--bg)", color: previewIdx === idx ? "var(--accent-light)" : "var(--muted)", border: `1px solid ${previewIdx === idx ? "var(--accent)" : "var(--border)"}`, cursor: "pointer" }}
+                        >
+                          {previewIdx === idx ? "✓ Preview" : "Preview"}
+                        </button>
+                        <button onClick={() => removeUrl(entry.id)} style={{ background: "none", color: "var(--muted)", fontSize: 14, padding: 0, lineHeight: 1, cursor: "pointer" }}>×</button>
+                      </div>
+                      {/* Badges de sanitização + metadados */}
+                      {rep && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                          {!rep.error ? (
+                            <>
+                              <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "rgba(34,197,94,0.1)", color: "var(--success)", border: "1px solid rgba(34,197,94,0.2)" }}>
+                                ✅ Sanitizado · ID:{rep.uniqueId}
+                              </span>
+                              <span style={{ fontSize: 9, color: "var(--muted)" }}>
+                                {(rep.originalSize / 1024).toFixed(0)}KB→{(rep.sanitizedSize / 1024).toFixed(0)}KB · {rep.durationMs}ms
+                              </span>
+                              {rep.removed?.length > 0 && (
+                                <span style={{ fontSize: 9, color: "var(--muted)" }}>
+                                  Removido: {rep.removed.slice(0, 2).join(", ")}{rep.removed.length > 2 ? ` +${rep.removed.length - 2}` : ""}
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "rgba(245,158,11,0.1)", color: "var(--warning)", border: "1px solid rgba(245,158,11,0.2)" }}>
+                              ⚠ Sanitização parcial
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
             {activeUrl && (
