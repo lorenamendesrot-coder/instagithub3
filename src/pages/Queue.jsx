@@ -1,5 +1,5 @@
 // Queue.jsx — Fila de agendamentos (aba dedicada)
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useScheduler } from "../App.jsx";
 import Modal from "../Modal.jsx";
 
@@ -11,19 +11,52 @@ const STATUS_INFO = {
 };
 
 export default function Queue() {
-  const { queue, updateItem, removeItem, clearQueue } = useScheduler();
+  const { queue, updateItem, removeItem, clearQueue, reload: reloadQueue } = useScheduler();
   const [editModal,    setEditModal]    = useState(null);
   const [editTime,     setEditTime]     = useState("");
   const [editCaption,  setEditCaption]  = useState("");
   const [confirmModal, setConfirmModal] = useState(null);
   const [filter,       setFilter]       = useState("all");
 
-  const pendingCount = queue.filter((q) => q.status === "pending").length;
-  const runningCount = queue.filter((q) => q.status === "running").length;
-  const doneCount    = queue.filter((q) => q.status === "done").length;
-  const errorCount   = queue.filter((q) => q.status === "error").length;
+  // Separa itens normais dos video_finish (tarefas internas do SW)
+  const mainQueue    = queue.filter((q) => !q.type);
+  const videoFinish  = queue.filter((q) => q.type === "video_finish");
 
-  const filtered = filter === "all" ? queue : queue.filter((q) => q.status === filter);
+  // Monta mapa: historyId → { attempts, status, error, username }[]
+  const vfByParent = {};
+  for (const vf of videoFinish) {
+    const key = vf.historyId || vf.parentId;
+    if (!key) continue;
+    if (!vfByParent[key]) vfByParent[key] = [];
+    vfByParent[key].push(vf);
+  }
+
+  const pendingCount = mainQueue.filter((q) => q.status === "pending").length;
+  const runningCount = mainQueue.filter((q) => q.status === "running").length;
+  const doneCount    = mainQueue.filter((q) => q.status === "done").length;
+  const errorCount   = mainQueue.filter((q) => q.status === "error").length;
+
+  const filtered = (filter === "all" ? mainQueue : mainQueue.filter((q) => q.status === filter));
+
+  // Auto-reload quando há video_finish pendentes
+  const hasPendingVF = videoFinish.some((v) => v.status === "pending" || v.status === "running");
+  const { reloadQueue } = useScheduler();
+  const pollRef = useRef(null);
+  useEffect(() => {
+    if (hasPendingVF) {
+      pollRef.current = setInterval(reloadQueue, 8000);
+    } else {
+      clearInterval(pollRef.current);
+    }
+    return () => clearInterval(pollRef.current);
+  }, [hasPendingVF, reloadQueue]);
+
+  // Escuta SW updates
+  useEffect(() => {
+    const h = () => reloadQueue?.();
+    window.addEventListener("sw:queue-update", h);
+    return () => window.removeEventListener("sw:queue-update", h);
+  }, [reloadQueue]);
 
   const openEdit = (item) => {
     setEditModal(item);
@@ -194,6 +227,45 @@ export default function Queue() {
                     {item.error && (
                       <div style={{ fontSize: 10, color: "var(--danger)", marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         ✗ {item.error}
+                      </div>
+                    )}
+
+                    {/* Badge de video_finish — mostra tentativas e status por conta */}
+                    {vfByParent[item.id] && (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
+                        {vfByParent[item.id].map((vf, i) => {
+                          const vfColor = vf.status === "done"    ? "var(--success)"
+                            : vf.status === "error"   ? "var(--danger)"
+                            : vf.status === "running" ? "var(--warning)"
+                            : "var(--info)";
+                          const vfBg = vf.status === "done"    ? "rgba(34,197,94,0.08)"
+                            : vf.status === "error"   ? "rgba(239,68,68,0.08)"
+                            : vf.status === "running" ? "rgba(245,158,11,0.08)"
+                            : "rgba(56,189,248,0.08)";
+                          const vfIcon = vf.status === "done"    ? "✅"
+                            : vf.status === "error"   ? "❌"
+                            : vf.status === "running" ? "⟳"
+                            : "⏳";
+                          return (
+                            <div key={i} title={vf.error || ""} style={{
+                              fontSize: 10, padding: "2px 7px", borderRadius: 20,
+                              background: vfBg, color: vfColor,
+                              border: `1px solid ${vfColor}40`,
+                              display: "flex", alignItems: "center", gap: 4,
+                            }}>
+                              <span>{vfIcon}</span>
+                              <span>@{vf.username}</span>
+                              {vf.attempts > 0 && (
+                                <span style={{ opacity: 0.65 }}>×{vf.attempts + 1}</span>
+                              )}
+                              {vf.error && (
+                                <span style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {" — "}{vf.error}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
