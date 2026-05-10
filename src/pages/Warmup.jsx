@@ -17,6 +17,7 @@ export default function Warmup() {
   const { accounts, addAccounts, reloadAccounts } = useAccounts();
 
   const [files,        setFiles]        = useState({ reels: [], feed: [], stories: [] });
+  const filesRef = useRef({ reels: [], feed: [], stories: [] }); // sempre atualizado, evita stale closure
   const [uploading,    setUploading]    = useState(false);
   const [bulkCaptions, setBulkCaptions] = useState("");
   const [captionMode,  setCaptionMode]  = useState("roundrobin");
@@ -100,7 +101,7 @@ export default function Warmup() {
   }, [syncingNames, eligibleAccounts, addAccounts, reloadAccounts]);
 
   useEffect(() => {
-    if (tab === "monitor") {
+    if (tab === "monitor" || tab === "preview") {
       dbGetAll("queue").then((q) => setDbQueue(q.filter((x) => x.warmup)));
     }
   }, [tab]);
@@ -199,16 +200,21 @@ export default function Warmup() {
     };
   }, [files]);
 
+  // Mantém filesRef sempre atualizado para evitar stale closure no generateQueue
+  useEffect(() => { filesRef.current = files; }, [files]);
+
   const reelFiles      = (files.reels || []).filter((f) => f.file);
   const parsedCaptions = useMemo(() => bulkCaptions.split("\n").map((l) => l.trim()).filter(Boolean), [bulkCaptions]);
 
   const generateQueue = useCallback(() => {
-    if (!stats.totalDone) { alert("Faça o upload de pelo menos 1 mídia antes de gerar a fila."); return; }
+    const currentFiles = filesRef.current; // usa ref para garantir valor mais recente
+    const totalDone = ["reels","feed","stories"].reduce((s, t) => s + (currentFiles[t]||[]).filter(f=>f.status==="done").length, 0);
+    if (!totalDone) { alert("Faça o upload de pelo menos 1 mídia antes de gerar a fila."); return; }
     if (!selectedAccounts.length) { alert("Selecione pelo menos uma conta para o aquecimento."); return; }
     const mediaByType = {
-      reels:   (files.reels   || []).filter((f) => f.status === "done").map((f) => ({ url: f.url, name: f.name })),
-      feed:    (files.feed    || []).filter((f) => f.status === "done").map((f) => ({ url: f.url, name: f.name })),
-      stories: (files.stories || []).filter((f) => f.status === "done").map((f) => ({ url: f.url, name: f.name })),
+      reels:   (currentFiles.reels   || []).filter((f) => f.status === "done").map((f) => ({ url: f.url, name: f.name })),
+      feed:    (currentFiles.feed    || []).filter((f) => f.status === "done").map((f) => ({ url: f.url, name: f.name })),
+      stories: (currentFiles.stories || []).filter((f) => f.status === "done").map((f) => ({ url: f.url, name: f.name })),
     };
     const activeDays = dayConfig.filter((d) => selectedDays.includes(d.day));
     if (!activeDays.length) { alert("Selecione pelo menos um dia para gerar a fila."); return; }
@@ -219,10 +225,15 @@ export default function Warmup() {
       startDateStr: startDate, distribution,
       loopEnabled, loopDays,
     });
+    if (!generated.length) {
+      const r = mediaByType.reels.length, f = mediaByType.feed.length, s = mediaByType.stories.length;
+      alert(`Nenhum post gerado. Mídias prontas: Reels=${r}, Feed=${f}, Stories=${s}\nO preset precisa de pelo menos 1 Reel com upload concluído.`);
+      return;
+    }
     setQueue(generated);
     setSaved(false);
     setTab("preview");
-  }, [files, selectedAccounts, parsedCaptions, captionMode, dayConfig, selectedDays, startDate, distribution, stats.totalDone, loopEnabled, loopDays]);
+  }, [selectedAccounts, parsedCaptions, captionMode, dayConfig, selectedDays, startDate, distribution, loopEnabled, loopDays]);
 
   const cancelWarmupQueue = useCallback(async () => {
     if (!window.confirm("Cancelar toda a fila de aquecimento pendente? Posts já publicados não serão desfeitos.")) return;
