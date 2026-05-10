@@ -144,16 +144,16 @@ export function timeToMs(dateBase, timeStr) {
 export function generateSlotTimes(dayBase, count, plan) {
   let windowStart = timeToMs(dayBase, plan.windowStart);
   let windowEnd   = timeToMs(dayBase, plan.windowEnd);
+  const now = Date.now();
 
-  // Se a janela do dia já passou inteiramente, avança 1 dia
-  if (windowEnd < Date.now()) {
-    const next = new Date(dayBase);
-    next.setDate(next.getDate() + 1);
-    windowStart = timeToMs(next, plan.windowStart);
-    windowEnd   = timeToMs(next, plan.windowEnd);
-  } else if (windowStart < Date.now()) {
-    // Janela começou mas ainda não terminou — começa do momento atual
-    windowStart = Date.now() + 60000; // 1 min de margem
+  // Se a janela inteira já passou, estende o windowEnd para now + espaço suficiente
+  // Isso permite gerar slots mesmo fora do horário (útil para testes)
+  if (windowEnd < now) {
+    windowStart = now + 60000;
+    windowEnd   = now + (count * 10 * 60 * 1000) + 60000; // count × 10min + margem
+  } else if (windowStart < now) {
+    // Janela já começou — parte do momento atual
+    windowStart = now + 60000;
   }
 
   // Intervalo base aleatório entre min e max (distribui os posts na janela)
