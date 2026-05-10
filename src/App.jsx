@@ -25,9 +25,12 @@ import MobileBottomNav from "./MobileBottomNav.jsx";
 
 export { useAccounts };
 
-// ─── History — IndexedDB ─────────────────────────────────────────────────────
-let _historyInstance = null;
-export const useHistory = () => {
+// ─── History Context — instância única compartilhada ─────────────────────────
+const HistoryContext = createContext(null);
+
+export const useHistory = () => useContext(HistoryContext);
+
+function HistoryProvider({ children }) {
   const [history, setHistory]       = useState([]);
   const [totalCount, setTotalCount] = useState(0);
 
@@ -38,13 +41,24 @@ export const useHistory = () => {
     setHistory(all.slice(0, 500));
   }, []);
 
-  useEffect(() => { reload(); }, []);
+  useEffect(() => { reload(); }, [reload]);
 
-  const addEntry    = async (entry) => { await dbPut("history", entry); reload(); };
-  const clearHistory = async () => { await dbClear("history"); setHistory([]); setTotalCount(0); };
+  // Escuta evento do SW para recarregar
+  useEffect(() => {
+    const h = () => reload();
+    window.addEventListener("sw:queue-update", h);
+    return () => window.removeEventListener("sw:queue-update", h);
+  }, [reload]);
 
-  return { history, totalCount, addEntry, clearHistory, reloadHistory: reload };
-};
+  const addEntry    = useCallback(async (entry) => { await dbPut("history", entry); reload(); }, [reload]);
+  const clearHistory = useCallback(async () => { await dbClear("history"); setHistory([]); setTotalCount(0); }, []);
+
+  return (
+    <HistoryContext.Provider value={{ history, totalCount, addEntry, clearHistory, reloadHistory: reload }}>
+      {children}
+    </HistoryContext.Provider>
+  );
+}
 
 // ─── Scheduler Context — roda globalmente independente de qual aba está aberta ─
 const SchedulerContext = createContext(null);
@@ -237,6 +251,7 @@ function SchedulerProvider({ addEntry, children }) {
               pending_accounts: pendingAccounts,
               created_at: new Date().toISOString(),
               from_scheduler: true,
+              source: item.warmup ? "warmup" : "schedule",
             });
           }
 
@@ -271,8 +286,8 @@ function SchedulerProvider({ addEntry, children }) {
   );
 }
 
-// ─── App ─────────────────────────────────────────────────────────────────────
-export default function App() {
+// ─── AppShell — usa os contextos (precisa estar dentro dos providers) ─────────
+function AppShell() {
   const { addAccounts, accounts, reloadAccounts, syncing, loading: accountsLoading } = useAccounts();
   const { toast, showToast }   = useToast();
   const { swStatus }           = useServiceWorker();
@@ -366,5 +381,14 @@ export default function App() {
         `}</style>
       </div>
     </SchedulerProvider>
+  );
+}
+
+// ─── App — fornece os providers e renderiza AppShell ─────────────────────────
+export default function App() {
+  return (
+    <HistoryProvider>
+      <AppShell />
+    </HistoryProvider>
   );
 }
