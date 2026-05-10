@@ -19,10 +19,10 @@ export default function Queue() {
   const [filter,       setFilter]       = useState("all");
 
   // Separa itens normais dos video_finish (tarefas internas do SW)
-  const mainQueue    = queue.filter((q) => !q.type);
-  const videoFinish  = queue.filter((q) => q.type === "video_finish");
+  const mainQueue   = queue.filter((q) => !q.type);
+  const videoFinish = queue.filter((q) => q.type === "video_finish");
 
-  // Monta mapa: historyId → { attempts, status, error, username }[]
+  // Mapa historyId → video_finish items (para mostrar no card pai)
   const vfByParent = {};
   for (const vf of videoFinish) {
     const key = vf.historyId || vf.parentId;
@@ -36,11 +36,10 @@ export default function Queue() {
   const doneCount    = mainQueue.filter((q) => q.status === "done").length;
   const errorCount   = mainQueue.filter((q) => q.status === "error").length;
 
-  const filtered = (filter === "all" ? mainQueue : mainQueue.filter((q) => q.status === filter));
+  const filtered = filter === "all" ? mainQueue : mainQueue.filter((q) => q.status === filter);
 
-  // Auto-reload quando há video_finish pendentes
+  // Auto-reload enquanto há video_finish pendentes
   const hasPendingVF = videoFinish.some((v) => v.status === "pending" || v.status === "running");
-  const { reloadQueue } = useScheduler();
   const pollRef = useRef(null);
   useEffect(() => {
     if (hasPendingVF) {
@@ -51,7 +50,6 @@ export default function Queue() {
     return () => clearInterval(pollRef.current);
   }, [hasPendingVF, reloadQueue]);
 
-  // Escuta SW updates
   useEffect(() => {
     const h = () => reloadQueue?.();
     window.addEventListener("sw:queue-update", h);
@@ -229,40 +227,18 @@ export default function Queue() {
                         ✗ {item.error}
                       </div>
                     )}
-
-                    {/* Badge de video_finish — mostra tentativas e status por conta */}
                     {vfByParent[item.id] && (
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
                         {vfByParent[item.id].map((vf, i) => {
-                          const vfColor = vf.status === "done"    ? "var(--success)"
-                            : vf.status === "error"   ? "var(--danger)"
-                            : vf.status === "running" ? "var(--warning)"
-                            : "var(--info)";
-                          const vfBg = vf.status === "done"    ? "rgba(34,197,94,0.08)"
-                            : vf.status === "error"   ? "rgba(239,68,68,0.08)"
-                            : vf.status === "running" ? "rgba(245,158,11,0.08)"
-                            : "rgba(56,189,248,0.08)";
-                          const vfIcon = vf.status === "done"    ? "✅"
-                            : vf.status === "error"   ? "❌"
-                            : vf.status === "running" ? "⟳"
-                            : "⏳";
+                          const vfColor = vf.status === "done" ? "var(--success)" : vf.status === "error" ? "var(--danger)" : vf.status === "running" ? "var(--warning)" : "var(--info)";
+                          const vfBg    = vf.status === "done" ? "rgba(34,197,94,0.08)" : vf.status === "error" ? "rgba(239,68,68,0.08)" : vf.status === "running" ? "rgba(245,158,11,0.08)" : "rgba(56,189,248,0.08)";
+                          const vfIcon  = vf.status === "done" ? "✅" : vf.status === "error" ? "❌" : vf.status === "running" ? "⟳" : "⏳";
                           return (
-                            <div key={i} title={vf.error || ""} style={{
-                              fontSize: 10, padding: "2px 7px", borderRadius: 20,
-                              background: vfBg, color: vfColor,
-                              border: `1px solid ${vfColor}40`,
-                              display: "flex", alignItems: "center", gap: 4,
-                            }}>
+                            <div key={i} title={vf.error || ""} style={{ fontSize: 10, padding: "2px 7px", borderRadius: 20, background: vfBg, color: vfColor, border: `1px solid ${vfColor}40`, display: "flex", alignItems: "center", gap: 4 }}>
                               <span>{vfIcon}</span>
                               <span>@{vf.username}</span>
-                              {vf.attempts > 0 && (
-                                <span style={{ opacity: 0.65 }}>×{vf.attempts + 1}</span>
-                              )}
-                              {vf.error && (
-                                <span style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                  {" — "}{vf.error}
-                                </span>
-                              )}
+                              {vf.attempts > 0 && <span style={{ opacity: 0.65 }}>×{vf.attempts + 1}</span>}
+                              {vf.error && <span style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{" — "}{vf.error}</span>}
                             </div>
                           );
                         })}
