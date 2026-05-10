@@ -131,7 +131,6 @@ export default function Warmup() {
   const resetAllFiles = useCallback(() => {
     setFiles({ reels: [], feed: [], stories: [] });
   }, [setFiles]);
-  }, []);
 
   // Adiciona mídias a partir de URLs externas (já prontas, sem upload)
   const addFilesByUrl = useCallback((typeId, urls) => {
