@@ -1,29 +1,23 @@
 // netlify/functions/queue.mjs
-// CRUD da fila de agendamentos — usa Netlify Blobs
-// GET    /api/queue         → lista todos os itens
-// POST   /api/queue         → salva array de itens (addBatch)
-// PUT    /api/queue         → atualiza um item (updateItem)
-// DELETE /api/queue?id=xxx  → remove um item
-// DELETE /api/queue         → limpa tudo
+// Salva TODA a fila num único blob "queue-data"
+// Suporta 800+ itens sem timeout — 1 write em vez de 800 writes paralelos
+//
+// GET    /api/queue        → retorna array de itens
+// POST   /api/queue        → addBatch: adiciona/substitui itens pelo id
+// PUT    /api/queue        → updateItem: atualiza um item pelo id
+// DELETE /api/queue?id=xxx → remove item específico
+// DELETE /api/queue        → limpa tudo
 
 import { getStore } from "@netlify/blobs";
 
 const STORE_NAME = "insta-queue";
+const BLOB_KEY   = "queue-data"; // tudo num único blob
 
 function getQueueStore() {
   const siteID = process.env.NETLIFY_SITE_ID;
   const token  = process.env.NETLIFY_TOKEN;
-
-  if (!siteID || !token) {
-    throw new Error("Configure NETLIFY_SITE_ID e NETLIFY_TOKEN no painel do Netlify");
-  }
-
-  return getStore({
-    name:        STORE_NAME,
-    siteID,
-    token,
-    consistency: "strong",
-  });
+  if (!siteID || !token) throw new Error("Configure NETLIFY_SITE_ID e NETLIFY_TOKEN");
+  return getStore({ name: STORE_NAME, siteID, token, consistency: "strong" });
 }
 
 const CORS = {
@@ -36,73 +30,82 @@ function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: CORS });
 }
 
+async function readAll(store) {
+  try {
+    const data = await store.get(BLOB_KEY, { type: "json" });
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeAll(store, items) {
+  await store.setJSON(BLOB_KEY, items);
+}
+
 export default async function handler(req) {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
 
   try {
     const store = getQueueStore();
 
-    // ── GET — listar todos os itens ────────────────────────────────────────
+    // GET — retorna todos os itens
     if (req.method === "GET") {
-      const { blobs } = await store.list();
-      const items = await Promise.all(
-        blobs.map(async ({ key }) => {
-          try { return await store.get(key, { type: "json" }); }
-          catch { return null; }
-        })
-      );
-      return json(items.filter(Boolean));
+      const items = await readAll(store);
+      return json(items);
     }
 
-    // ── POST — salvar array de itens (addBatch) ────────────────────────────
+    // POST — addBatch: insere ou substitui itens pelo id
     if (req.method === "POST") {
-      const body = await req.json();
-      const items = Array.isArray(body) ? body : [body];
+      const body  = await req.json();
+      const news  = Array.isArray(body) ? body : [body];
+      const queue = await readAll(store);
 
-      await Promise.all(
-        items.map((item) => {
-          if (!item?.id) return;
-          // Chave sem caracteres especiais
-          const key = String(item.id).replace(/[^a-zA-Z0-9_-]/g, "_");
-          return store.setJSON(key, item);
-        })
-      );
+      for (const item of news) {
+        if (!item?.id) continue;
+        const idx = queue.findIndex((x) => x.id === item.id);
+        if (idx >= 0) queue[idx] = item;
+        else queue.push(item);
+      }
 
-      return json({ saved: items.length });
+      await writeAll(store, queue);
+      return json({ saved: news.length, total: queue.length });
     }
 
-    // ── PUT — atualizar um item ────────────────────────────────────────────
+    // PUT — updateItem: atualiza um item pelo id
     if (req.method === "PUT") {
-      const item = await req.json();
+      const item  = await req.json();
       if (!item?.id) return json({ error: "id obrigatório" }, 400);
 
-      const key = String(item.id).replace(/[^a-zA-Z0-9_-]/g, "_");
-      await store.setJSON(key, item);
+      const queue = await readAll(store);
+      const idx   = queue.findIndex((x) => x.id === item.id);
+      if (idx >= 0) queue[idx] = item;
+      else queue.push(item);
+
+      await writeAll(store, queue);
       return json(item);
     }
 
-    // ── DELETE — remover item ou limpar tudo ──────────────────────────────
+    // DELETE — remove item ou limpa tudo
     if (req.method === "DELETE") {
       const url = new URL(req.url);
       const id  = url.searchParams.get("id");
 
       if (id) {
-        // Remover item específico
-        const key = String(id).replace(/[^a-zA-Z0-9_-]/g, "_");
-        await store.delete(key);
-        return json({ deleted: id });
+        const queue   = await readAll(store);
+        const updated = queue.filter((x) => String(x.id) !== String(id));
+        await writeAll(store, updated);
+        return json({ deleted: id, remaining: updated.length });
       } else {
-        // Limpar tudo
-        const { blobs } = await store.list();
-        await Promise.all(blobs.map(({ key }) => store.delete(key)));
-        return json({ cleared: blobs.length });
+        await writeAll(store, []);
+        return json({ cleared: true });
       }
     }
 
     return json({ error: "Método não permitido" }, 405);
 
   } catch (err) {
-    console.error("[queue.mjs] Erro:", err.message);
+    console.error("[queue.mjs]", err.message);
     return json({ error: err.message }, 500);
   }
 }
