@@ -1,5 +1,7 @@
 // Warmup.jsx
-import { sanitizeFile } from "../sanitizeClient.js";
+import { uploadFile, warmupDay, isNewAccount, buildWarmupQueue, shadowScore, fmtSize, NEW_ACCOUNT_DAYS, WARMUP_PRESET_2D, TABS, MEDIA_TYPES } from "../components/warmup/WarmupUtils.js";
+import MediaUploadZone from "../components/warmup/WarmupMediaUploadZone.jsx";
+import AccountMonitorCard from "../components/warmup/WarmupAccountMonitorCard.jsx";
 // Foco: aquecimento rápido em 2 dias, Reels-first, proteção de contas novas
 // Tabs: Upload de Mídias | Legendas | Configuração | Preview da Fila | Monitor
 
@@ -8,494 +10,6 @@ import { useAccounts } from "../useAccounts.js";
 import { dbPut, dbGetAll } from "../useDB.js";
 import BulkCaptions, { pickCaption } from "../components/BulkCaptions.jsx";
 import ReelChecklist from "../components/ReelChecklist.jsx";
-
-// ─── Constantes ───────────────────────────────────────────────────────────────
-
-const WARMUP_PRESET_2D = {
-  id:    "fast2d",
-  label: "Aquecimento Rápido 2 Dias 🚀",
-  desc:  "Foco em Reels com Feed e Stories complementares. Alta proteção de conta.",
-  days: [
-    {
-      day: 1,
-      label: "Dia 1 — Arranque Suave",
-      reels:   3,
-      feed:    1,
-      stories: 2,
-      windowStart: "09:00",
-      windowEnd:   "21:30",
-      intervalMinMin: 90,
-      intervalMinMax: 150,
-    },
-    {
-      day: 2,
-      label: "Dia 2 — Aceleração",
-      reels:   5,
-      feed:    2,
-      stories: 3,
-      windowStart: "09:00",
-      windowEnd:   "21:30",
-      intervalMinMin: 60,
-      intervalMinMax: 120,
-    },
-  ],
-};
-
-const JITTER_MIN_RANGE = [-40, 40];
-const JITTER_SEC_RANGE = [0, 59];
-const NEW_ACCOUNT_DAYS = 2; // contas com até 2 dias de idade
-
-const TABS = [
-  { id: "upload",   icon: "📤", label: "Upload"         },
-  { id: "captions", icon: "💬", label: "Legendas"       },
-  { id: "config",   icon: "⚙️",  label: "Configuração"  },
-  { id: "preview",  icon: "📅", label: "Preview da Fila" },
-  { id: "monitor",  icon: "📊", label: "Monitor"        },
-];
-
-const MEDIA_TYPES = [
-  { id: "reels",   icon: "🎬", label: "Reels",   accept: "video/*",         hint: "MP4, MOV · 8–90s recomendado",          postType: "REEL",  mediaType: "VIDEO" },
-  { id: "feed",    icon: "🖼",  label: "Feed",    accept: "image/*,video/*", hint: "JPG, PNG, MP4 · fotos e carrosséis",    postType: "FEED",  mediaType: "IMAGE" },
-  { id: "stories", icon: "⭕",  label: "Stories", accept: "image/*,video/*", hint: "Vertical 9:16 · até 15s para vídeo",   postType: "STORY", mediaType: "IMAGE" },
-];
-
-// ─── Utilitários ──────────────────────────────────────────────────────────────
-
-function fmtSize(b) {
-  if (!b) return "—";
-  if (b < 1048576) return `${(b / 1024).toFixed(0)} KB`;
-  return `${(b / 1048576).toFixed(1)} MB`;
-}
-
-function warmupDay(connectedAt) {
-  const diff = Math.floor((Date.now() - new Date(connectedAt)) / 86400000);
-  return Math.min(diff + 1, 99);
-}
-
-function isNewAccount(acc) {
-  return warmupDay(acc.connected_at || new Date().toISOString()) <= NEW_ACCOUNT_DAYS;
-}
-
-// Upload direto do browser para R2 via presigned URL — sem limite de tamanho
-async function uploadFile(file, onProgress, onSanitized) {
-  onProgress(2);
-
-  // Passo 1: obter presigned URL
-  const presignRes = await fetch("/api/r2-presign", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ fileName: file.name, mimeType: file.type || "video/mp4" }),
-  });
-  if (!presignRes.ok) {
-    const err = await presignRes.json().catch(() => ({}));
-    throw new Error(err.error || `Erro ao gerar URL (${presignRes.status})`);
-  }
-  const { presignedUrl, publicUrl } = await presignRes.json();
-  onProgress(8);
-
-  // Passo 2: sanitizar no browser (remove EXIF/metadados)
-  let fileToUpload = file;
-  try {
-    const { file: sanitized, report } = await sanitizeFile(file);
-    fileToUpload = sanitized;
-    if (onSanitized) onSanitized(report);
-    onProgress(18);
-  } catch (err) {
-    console.warn("Sanitização falhou, usando arquivo original:", err.message);
-    if (onSanitized) onSanitized({ error: err.message, supported: false });
-  }
-
-  // Passo 3: PUT direto no R2 com progresso real via XHR
-  await new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 80) + 18);
-    };
-    xhr.onload    = () => xhr.status === 200 ? resolve() : reject(new Error(`R2 HTTP ${xhr.status}`));
-    xhr.onerror   = () => reject(new Error("Erro de rede durante o upload"));
-    xhr.ontimeout = () => reject(new Error("Timeout no upload"));
-    xhr.timeout   = 5 * 60 * 1000;
-    xhr.open("PUT", presignedUrl);
-    xhr.setRequestHeader("Content-Type", fileToUpload.type || "video/mp4");
-    xhr.send(fileToUpload);
-  });
-
-  onProgress(100);
-  return publicUrl;
-}
-
-function addJitter(date, minRange, secRange) {
-  const jitterMin = Math.floor(Math.random() * (minRange[1] - minRange[0] + 1)) + minRange[0];
-  const jitterSec = Math.floor(Math.random() * (secRange[1] - secRange[0] + 1)) + secRange[0];
-  const result = new Date(date.getTime());
-  result.setMinutes(result.getMinutes() + jitterMin);
-  result.setSeconds(jitterSec);
-  return result;
-}
-
-function timeToMs(dateBase, timeStr) {
-  const [h, m] = timeStr.split(":").map(Number);
-  const d = new Date(dateBase);
-  d.setHours(h, m, 0, 0);
-  return d.getTime();
-}
-
-function generateSlotTimes(dayBase, count, plan) {
-  const windowStart = timeToMs(dayBase, plan.windowStart);
-  const windowEnd   = timeToMs(dayBase, plan.windowEnd);
-  const intervalMs  = plan.intervalMinMin * 60 * 1000;
-  const times = [];
-  for (let i = 0; i < count; i++) {
-    const base = new Date(windowStart + i * intervalMs);
-    if (base.getTime() > windowEnd) break;
-    const jittered = addJitter(base, JITTER_MIN_RANGE, JITTER_SEC_RANGE);
-    const final = new Date(Math.min(Math.max(jittered.getTime(), windowStart), windowEnd));
-    times.push(final);
-  }
-  return times;
-}
-
-function buildWarmupQueue({ accounts, mediaByType, captions, captionMode, preset, startDateStr, distribution }) {
-  const slots = [];
-  if (!accounts.length) return slots;
-
-  const startBase = new Date(startDateStr + "T00:00:00");
-
-  preset.days.forEach((dayPlan) => {
-    const dayBase = new Date(startBase);
-    dayBase.setDate(dayBase.getDate() + (dayPlan.day - 1));
-
-    const typeConfig = [
-      { key: "reels",   count: dayPlan.reels,   ...MEDIA_TYPES[0] },
-      { key: "feed",    count: dayPlan.feed,     ...MEDIA_TYPES[1] },
-      { key: "stories", count: dayPlan.stories,  ...MEDIA_TYPES[2] },
-    ];
-
-    const daySlots = [];
-
-    typeConfig.forEach(({ key, count, postType, mediaType }) => {
-      const pool = mediaByType[key] || [];
-      if (!pool.length || !count) return;
-
-      accounts.forEach((acc, accIdx) => {
-        const times = generateSlotTimes(dayBase, count, dayPlan);
-        times.forEach((scheduledDate, k) => {
-          const mediaIdx = distribution === "random"
-            ? Math.floor(Math.random() * pool.length)
-            : (accIdx * count + k) % pool.length;
-          const media     = pool[mediaIdx];
-          const slotIdx   = slots.length + daySlots.length;
-          const caption   = captions.length ? pickCaption(captions, captionMode, slotIdx) : "";
-
-          daySlots.push({
-            id:            `wup-${acc.id}-${dayPlan.day}-${key}-${k}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-            accountId:     acc.id,
-            username:      acc.username,
-            mediaUrl:      media.url,
-            mediaUrls:     [media.url],
-            mediaName:     media.name,
-            mediaType,
-            postType,
-            mediaCategory: key,
-            caption,
-            bulkCaptions:  captions,
-            captionMode,
-            accounts:      [{ id: acc.id, username: acc.username }],
-            scheduledAt:   scheduledDate.getTime(),
-            scheduledDay:  dayPlan.day,
-            status:        "pending",
-            warmup:        true,
-            warmupDay:     dayPlan.day,
-            created_at:    new Date().toISOString(),
-          });
-        });
-      });
-    });
-
-    daySlots.sort((a, b) => a.scheduledAt - b.scheduledAt);
-    slots.push(...daySlots);
-  });
-
-  return slots;
-}
-
-function shadowScore(insights) {
-  if (!insights || insights.length < 3) return null;
-  const vs  = insights.map((i) => i.views || i.reach || 0);
-  const avg  = vs.reduce((a, b) => a + b, 0) / vs.length;
-  const last = vs[vs.length - 1];
-  const drop = avg > 0 ? Math.round(((avg - last) / avg) * 100) : 0;
-  return { avg: Math.round(avg), last, drop };
-}
-
-// ─── Sub-componentes ──────────────────────────────────────────────────────────
-
-function MediaUploadZone({ typeConfig, files, onAddFiles, onRemoveFile, onUploadAll, uploading, urlInput, onUrlInputChange, onAddUrl }) {
-  const [dragging,    setDragging]    = useState(false);
-  const [showBulkUrl, setShowBulkUrl] = useState(false);
-  const inputRef = useRef();
-
-  const onDrop = useCallback((e) => {
-    e.preventDefault();
-    setDragging(false);
-    if (e.dataTransfer.files.length) onAddFiles(typeConfig.id, e.dataTransfer.files);
-  }, [typeConfig.id, onAddFiles]);
-
-  const myFiles = files[typeConfig.id] || [];
-  const done    = myFiles.filter((f) => f.status === "done");
-  const errors  = myFiles.filter((f) => f.status === "error");
-  const idle    = myFiles.filter((f) => f.status === "idle");
-
-  const handleAddUrl = () => {
-    const urls = (urlInput || "").split(/[\n,]/).map((u) => u.trim()).filter((u) => u.startsWith("http"));
-    if (!urls.length) return;
-    onAddUrl(typeConfig.id, urls);
-    onUrlInputChange(typeConfig.id, "");
-    setShowBulkUrl(false);
-  };
-
-  const urlCount = (urlInput || "").split(/[\n,]/).filter((u) => u.trim().startsWith("http")).length;
-
-  return (
-    <div style={{ marginBottom: 4 }}>
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-        <span style={{ fontSize: 18 }}>{typeConfig.icon}</span>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 700, fontSize: 13 }}>{typeConfig.label}</div>
-          <div style={{ fontSize: 11, color: "var(--muted)" }}>{typeConfig.hint}</div>
-        </div>
-        {done.length > 0 && (
-          <span className="badge badge-success" style={{ fontSize: 10 }}>
-            {done.length} pronto{done.length > 1 ? "s" : ""}
-          </span>
-        )}
-      </div>
-
-      {/* 2 botões fixos */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-        <button className="btn btn-ghost btn-sm" style={{ flex: 1 }} onClick={() => inputRef.current?.click()}>
-          ☁️ Upload mídias
-        </button>
-        <button className={`btn btn-sm ${showBulkUrl ? "btn-primary" : "btn-ghost"}`} style={{ flex: 1 }} onClick={() => setShowBulkUrl((p) => !p)}>
-          🔗 + URL manual
-        </button>
-        <input ref={inputRef} type="file" multiple accept={typeConfig.accept} style={{ display: "none" }}
-          onChange={(e) => e.target.files.length && onAddFiles(typeConfig.id, e.target.files)} />
-      </div>
-
-      {/* Zona de drag & drop (sempre visível) */}
-      <div
-        onDrop={onDrop}
-        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-        onDragLeave={() => setDragging(false)}
-        onClick={() => inputRef.current?.click()}
-        style={{
-          border: `2px dashed ${dragging ? "var(--accent)" : "var(--border2)"}`,
-          borderRadius: 10, padding: "16px", textAlign: "center", cursor: "pointer",
-          background: dragging ? "rgba(124,92,252,0.08)" : "var(--bg3)",
-          transition: "all 0.15s", marginBottom: 8,
-        }}
-      >
-        <div style={{ fontSize: 20, marginBottom: 3 }}>{typeConfig.icon}</div>
-        <div style={{ fontSize: 12, fontWeight: 600 }}>{dragging ? "Solte aqui" : "Arraste ou clique"}</div>
-      </div>
-
-      {/* Painel URL em massa (expande ao clicar no botão) */}
-      {showBulkUrl && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 8 }}>
-          <textarea
-            placeholder={"Cole as URLs, uma por linha:\nhttps://files.catbox.moe/abc.mp4\nhttps://r2.exemplo.com/video2.mp4\nhttps://cdn.exemplo.com/video3.mp4"}
-            value={urlInput || ""}
-            onChange={(e) => onUrlInputChange(typeConfig.id, e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && e.ctrlKey) { e.preventDefault(); handleAddUrl(); } }}
-            style={{ fontSize: 11, minHeight: 90, resize: "vertical", fontFamily: "monospace", borderRadius: 8 }}
-          />
-          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <button className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={handleAddUrl} disabled={!urlCount}>
-              ✓ Adicionar {urlCount > 0 ? `${urlCount} URL${urlCount > 1 ? "s" : ""}` : "URLs"}
-            </button>
-            <span style={{ fontSize: 10, color: "var(--muted)", flexShrink: 0 }}>Ctrl+Enter</span>
-          </div>
-        </div>
-      )}
-
-      {myFiles.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 180, overflowY: "auto", marginBottom: 6 }}>
-          {myFiles.map((f) => {
-            const rep = f.sanitizationReport;
-            // Sanitização: null=ainda não, {supported:false}=não suportado, {error}=falhou, caso contrário=ok
-            const sanitOk      = rep && !rep.error && rep.supported !== false;
-            const sanitFailed  = rep && !!rep.error;
-            const sanitSkipped = rep && rep.supported === false;
-            const sanitizing   = f.status === "uploading" && !rep;
-
-            return (
-              <div key={f.id} style={{
-                borderRadius: 8, fontSize: 11, overflow: "hidden",
-                border: `1px solid ${f.status === "done" ? "rgba(34,197,94,0.2)" : f.status === "error" ? "rgba(239,68,68,0.2)" : "var(--border)"}`,
-                background: f.status === "done" ? "rgba(34,197,94,0.04)" : f.status === "error" ? "rgba(239,68,68,0.04)" : "var(--bg4)",
-              }}>
-                {/* Linha principal */}
-                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px" }}>
-                  <span style={{ fontSize: 13 }}>{f.fromUrl ? "🔗" : typeConfig.icon}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 500 }}>{f.name}</div>
-                    <div style={{ fontSize: 10, color: "var(--muted)" }}>
-                      {f.fromUrl ? "via URL" : fmtSize(f.size)}
-                      {f.status === "uploading" && f.progress < 18 && !rep && " · aguardando sanitização..."}
-                      {sanitizing && f.progress >= 8 && f.progress < 18 && " · sanitizando..."}
-                    </div>
-                    {/* Barra de progresso */}
-                    {f.status === "uploading" && (
-                      <div style={{ marginTop: 3, height: 2, background: "var(--border)", borderRadius: 1, overflow: "hidden" }}>
-                        <div style={{ height: "100%", width: `${f.progress}%`, background: f.progress < 18 ? "var(--warning)" : "var(--accent)", transition: "width 0.3s" }} />
-                      </div>
-                    )}
-                    {f.status === "error" && <div style={{ fontSize: 10, color: "var(--danger)", marginTop: 2 }}>✗ {f.error}</div>}
-                  </div>
-                  {/* Badges de status de upload */}
-                  {f.status === "idle"      && <span className="badge badge-gray"    style={{ fontSize: 10 }}>Pendente</span>}
-                  {f.status === "uploading" && <span className="spinner" style={{ width: 12, height: 12 }} />}
-                  {f.status === "done"      && <span className="badge badge-success" style={{ fontSize: 10 }}>✓ Enviado</span>}
-                  {f.status === "error"     && <span className="badge badge-danger"  style={{ fontSize: 10 }}>Erro</span>}
-                  {f.status !== "uploading" && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onRemoveFile(typeConfig.id, f.id); }}
-                      style={{ background: "none", color: "var(--muted)", fontSize: 14, padding: 0, flexShrink: 0, lineHeight: 1 }}
-                    >×</button>
-                  )}
-                </div>
-
-                {/* Faixa de sanitização — aparece durante e após o processo */}
-                {(f.status === "uploading" || rep) && !f.fromUrl && (
-                  <div style={{
-                    display: "flex", alignItems: "center", gap: 6,
-                    padding: "4px 10px 5px",
-                    borderTop: "1px solid var(--border)",
-                    background: sanitOk
-                      ? "rgba(34,197,94,0.06)"
-                      : sanitFailed
-                        ? "rgba(239,68,68,0.06)"
-                        : sanitSkipped
-                          ? "rgba(245,158,11,0.05)"
-                          : "rgba(124,92,252,0.05)",
-                    fontSize: 10,
-                  }}>
-                    {/* Ícone de status */}
-                    {!rep && <span className="spinner" style={{ width: 9, height: 9, flexShrink: 0 }} />}
-                    {sanitOk      && <span style={{ color: "var(--success)", fontWeight: 700 }}>🛡</span>}
-                    {sanitFailed  && <span style={{ color: "var(--danger)",  fontWeight: 700 }}>⚠</span>}
-                    {sanitSkipped && <span style={{ color: "var(--warning)", fontWeight: 700 }}>○</span>}
-
-                    {/* Texto descritivo */}
-                    <span style={{
-                      color: sanitOk ? "var(--success)" : sanitFailed ? "var(--danger)" : sanitSkipped ? "var(--warning)" : "var(--muted)",
-                      fontWeight: sanitOk || sanitFailed ? 600 : 400,
-                    }}>
-                      {!rep && "Sanitizando metadados..."}
-                      {sanitOk && "Metadados removidos"}
-                      {sanitFailed && `Sanitização falhou: ${rep.error}`}
-                      {sanitSkipped && "Formato não suportado — metadados mantidos"}
-                    </span>
-
-                    {/* Detalhes do report quando ok */}
-                    {sanitOk && rep.removedFields && rep.removedFields.length > 0 && (
-                      <span style={{ color: "var(--muted)", marginLeft: 4 }}>
-                        · {rep.removedFields.length} campo{rep.removedFields.length > 1 ? "s" : ""} limpo{rep.removedFields.length > 1 ? "s" : ""}
-                        {rep.removedFields.length <= 4 && ` (${rep.removedFields.join(", ")})`}
-                      </span>
-                    )}
-                    {sanitOk && (!rep.removedFields || rep.removedFields.length === 0) && (
-                      <span style={{ color: "var(--muted)", marginLeft: 4 }}>· nenhum campo sensível encontrado</span>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {(idle.length > 0 || errors.length > 0) && (
-        <button
-          className="btn btn-primary btn-sm"
-          style={{ width: "100%" }}
-          onClick={() => onUploadAll(typeConfig.id)}
-          disabled={uploading}
-        >
-          {uploading ? <><span className="spinner" /> Enviando...</> : `☁️ Enviar ${idle.length + errors.length}`}
-        </button>
-      )}
-    </div>
-  );
-}
-
-function AccountMonitorCard({ acc, queueItems }) {
-  const day        = warmupDay(acc.connected_at || new Date().toISOString());
-  const score      = shadowScore(acc.insights);
-  const risk       = score?.drop > 70 ? "high" : score?.drop > 40 ? "medium" : "ok";
-  const warmupItems= queueItems.filter((q) => q.accountId === acc.id && q.warmup);
-  const done       = warmupItems.filter((q) => q.status === "done").length;
-  const pending    = warmupItems.filter((q) => q.status === "pending").length;
-  const total      = warmupItems.length;
-  const riskStyle  = {
-    high:   { border: "rgba(239,68,68,0.35)",  bg: "rgba(239,68,68,0.04)"  },
-    medium: { border: "rgba(245,158,11,0.3)",  bg: "rgba(245,158,11,0.04)" },
-    ok:     { border: "var(--border)",          bg: "var(--bg2)"            },
-  }[risk];
-
-  return (
-    <div style={{ padding: "16px 18px", borderRadius: 12, background: riskStyle.bg, border: `1px solid ${riskStyle.border}` }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 700 }}>@{acc.username}</div>
-          <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
-            {isNewAccount(acc) ? `🔥 Conta nova — Dia ${day} de aquecimento` : `Conta ativa — Dia ${day}`}
-          </div>
-        </div>
-        {!score   ? <span className="badge badge-gray"    style={{ fontSize: 10 }}>Sem dados</span>
-        : risk === "high"   ? <span className="badge badge-danger"  style={{ fontSize: 10 }}>⚠️ Shadowban?</span>
-        : risk === "medium" ? <span className="badge badge-warning" style={{ fontSize: 10 }}>⚠️ Queda</span>
-        :                     <span className="badge badge-success" style={{ fontSize: 10 }}>✅ Normal</span>}
-      </div>
-
-      {total > 0 && (
-        <div style={{ marginBottom: 12 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
-            <span style={{ fontSize: 11, color: "var(--muted)" }}>Posts agendados</span>
-            <span style={{ fontSize: 11, fontWeight: 600 }}>{done}/{total}</span>
-          </div>
-          <div style={{ height: 4, background: "var(--border)", borderRadius: 2, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${total > 0 ? (done/total)*100 : 0}%`, background: "linear-gradient(90deg, var(--accent), #9b4dfc)", borderRadius: 2, transition: "width 0.5s" }} />
-          </div>
-          <div style={{ marginTop: 4, display: "flex", gap: 12, fontSize: 10, color: "var(--muted)" }}>
-            <span>✅ {done} publicados</span>
-            <span>⏳ {pending} pendentes</span>
-          </div>
-        </div>
-      )}
-
-      {score && (
-        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", padding: "8px 12px", borderRadius: 8, background: "rgba(0,0,0,0.2)" }}>
-          <div style={{ fontSize: 11, color: "var(--muted)" }}>Média <b style={{ color: "var(--text)" }}>{score.avg.toLocaleString()}</b> views</div>
-          <div style={{ fontSize: 11, color: "var(--muted)" }}>Último <b style={{ color: "var(--text)" }}>{score.last.toLocaleString()}</b></div>
-          <div style={{ fontSize: 11, color: "var(--muted)" }}>
-            Variação <b style={{ color: score.drop > 40 ? "var(--danger)" : "var(--success)" }}>
-              {score.drop > 0 ? `-${score.drop}%` : `+${Math.abs(score.drop)}%`}
-            </b>
-          </div>
-        </div>
-      )}
-
-      {total === 0 && (
-        <div style={{ fontSize: 11, color: "var(--muted)", textAlign: "center", padding: "4px 0" }}>
-          Sem agendamentos de aquecimento para esta conta
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ─── Componente Principal ─────────────────────────────────────────────────────
 
@@ -511,7 +25,10 @@ export default function Warmup() {
   const [useNewOnly,   setUseNewOnly]   = useState(true);
   const [selectedAccIds, setSelectedAccIds] = useState(null); // null = todas selecionadas
   const [urlInputs,    setUrlInputs]    = useState({ reels: "", feed: "", stories: "" });
-  const [dayConfig,    setDayConfig]    = useState(WARMUP_PRESET_2D.days);
+  const [dayConfig, setDayConfig] = useState(WARMUP_PRESET_2D.days);
+  const [selectedDays,    setSelectedDays]    = useState(() => WARMUP_PRESET_2D.days.map((d) => d.day)); // dias ativos
+  const [loopEnabled,     setLoopEnabled]     = useState(false);
+  const [loopDays,        setLoopDays]        = useState(7); // quantos dias extras em loop
   const [queue,        setQueue]        = useState([]);
   const [saving,       setSaving]       = useState(false);
   const [saved,        setSaved]        = useState(false);
@@ -631,8 +148,20 @@ export default function Warmup() {
     const pending = (files[typeId] || []).filter((f) => f.status === "idle" || f.status === "error");
     if (!pending.length) return;
     setUploading(true);
-    for (const entry of pending) {
-      setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, status: "uploading", progress: 0, error: "", sanitizationReport: null } : f) }));
+
+    // Marca todos como "uploading" de uma vez
+    setFiles((prev) => ({
+      ...prev,
+      [typeId]: prev[typeId].map((f) =>
+        pending.find((p) => p.id === f.id)
+          ? { ...f, status: "uploading", progress: 0, error: "", sanitizationReport: null }
+          : f
+      ),
+    }));
+
+    // Upload paralelo — máximo 50 simultâneos
+    const CONCURRENCY = 50;
+    const uploadOne = async (entry) => {
       try {
         let sanitizationReport = null;
         const url = await uploadFile(
@@ -641,7 +170,6 @@ export default function Warmup() {
             setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, progress } : f) }));
           },
           (report) => {
-            // Salva o report de sanitização em tempo real conforme chega
             sanitizationReport = report;
             setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, sanitizationReport: report } : f) }));
           }
@@ -650,7 +178,13 @@ export default function Warmup() {
       } catch (err) {
         setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, status: "error", error: err.message } : f) }));
       }
+    };
+
+    // Processa em lotes de CONCURRENCY
+    for (let i = 0; i < pending.length; i += CONCURRENCY) {
+      await Promise.all(pending.slice(i, i + CONCURRENCY).map(uploadOne));
     }
+
     setUploading(false);
   }, [files]);
 
@@ -676,16 +210,52 @@ export default function Warmup() {
       feed:    (files.feed    || []).filter((f) => f.status === "done").map((f) => ({ url: f.url, name: f.name })),
       stories: (files.stories || []).filter((f) => f.status === "done").map((f) => ({ url: f.url, name: f.name })),
     };
+    const activeDays = dayConfig.filter((d) => selectedDays.includes(d.day));
+    if (!activeDays.length) { alert("Selecione pelo menos um dia para gerar a fila."); return; }
     const generated = buildWarmupQueue({
       accounts: selectedAccounts, mediaByType,
       captions: parsedCaptions, captionMode,
-      preset: { ...WARMUP_PRESET_2D, days: dayConfig },
+      preset: { ...WARMUP_PRESET_2D, days: activeDays },
       startDateStr: startDate, distribution,
+      loopEnabled, loopDays,
     });
+
+    if (!generated.length) {
+      const reelCount   = mediaByType.reels.length;
+      const feedCount   = mediaByType.feed.length;
+      const storiesCount = mediaByType.stories.length;
+      alert(
+        `Nenhum post foi gerado. Verifique:
+` +
+        `• Mídias prontas: Reels=${reelCount}, Feed=${feedCount}, Stories=${storiesCount}
+` +
+        `• O preset exige Reels para gerar posts — faça upload de pelo menos 1 Reel.
+` +
+        `• Contas selecionadas: ${selectedAccounts.length}`
+      );
+      return;
+    }
+
     setQueue(generated);
     setSaved(false);
     setTab("preview");
-  }, [files, selectedAccounts, parsedCaptions, captionMode, dayConfig, startDate, distribution, stats.totalDone]);
+  }, [files, selectedAccounts, parsedCaptions, captionMode, dayConfig, selectedDays, startDate, distribution, stats.totalDone, loopEnabled, loopDays]);
+
+  const cancelWarmupQueue = useCallback(async () => {
+    if (!window.confirm("Cancelar toda a fila de aquecimento pendente? Posts já publicados não serão desfeitos.")) return;
+    try {
+      const all = await dbGetAll("queue");
+      const toRemove = all.filter((x) => x.warmup && x.status === "pending");
+      for (const item of toRemove) {
+        await dbPut("queue", { ...item, status: "cancelled" });
+      }
+      const q = await dbGetAll("queue");
+      setDbQueue(q.filter((x) => x.warmup));
+      setQueue([]);
+    } catch (err) {
+      alert("Erro ao cancelar fila: " + err.message);
+    }
+  }, []);
 
   const confirmQueue = useCallback(async () => {
     if (!queue.length) return;
@@ -704,12 +274,10 @@ export default function Warmup() {
     }
   }, [queue]);
 
-  const updateDayConfig = (dayIdx, key, value) => {
-    setDayConfig((prev) => {
-      const next = [...prev];
-      next[dayIdx] = { ...next[dayIdx], [key]: value };
-      return next;
-    });
+  const updateDayConfig = (dayNum, key, value) => {
+    setDayConfig((prev) =>
+      prev.map((d) => d.day === dayNum ? { ...d, [key]: value } : d)
+    );
   };
 
   const previewStats = useMemo(() => {
@@ -979,12 +547,14 @@ export default function Warmup() {
                           {acc.profile_picture
                             ? <img src={acc.profile_picture} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} />
                             : <div style={{ width: "100%", height: "100%", background: "linear-gradient(135deg, var(--accent), #9b4dfc)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 700, color: "#fff" }}>
-                                {(acc.username || "?")[0].toUpperCase()}
+                                {(acc.nickname || acc.name || acc.username || "?")[0].toUpperCase()}
                               </div>}
                         </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>@{acc.username}</div>
-                          <div style={{ fontSize: 10, color: "var(--muted)" }}>Dia {day}</div>
+                          <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {acc.nickname || acc.name || `@${acc.username}`}
+                          </div>
+                          <div style={{ fontSize: 10, color: "var(--muted)" }}>@{acc.username} · Dia {day}</div>
                         </div>
                         <div style={{ width: 7, height: 7, borderRadius: "50%", background: isNewAccount(acc) ? "var(--success)" : "var(--muted)", flexShrink: 0 }} />
                       </div>
@@ -1025,11 +595,62 @@ export default function Warmup() {
             </div>
           </div>
 
-          {/* Config por dia */}
-          {dayConfig.map((dayPlan, dayIdx) => (
+          {/* Seleção de dias ativos */}
+          <div className="card" style={{ marginBottom: 4 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              📅 Dias do aquecimento
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {dayConfig.map((dayPlan) => {
+                const active = selectedDays.includes(dayPlan.day);
+                return (
+                  <button
+                    key={dayPlan.day}
+                    onClick={() => setSelectedDays((prev) =>
+                      active
+                        ? prev.filter((d) => d !== dayPlan.day)
+                        : [...prev, dayPlan.day].sort((a, b) => a - b)
+                    )}
+                    style={{
+                      padding: "8px 16px", borderRadius: 10, fontSize: 12, fontWeight: active ? 700 : 400,
+                      cursor: "pointer", transition: "all 0.15s",
+                      background: active ? "rgba(124,92,252,0.15)" : "var(--bg3)",
+                      border: `1px solid ${active ? "rgba(124,92,252,0.45)" : "var(--border)"}`,
+                      color: active ? "var(--accent-light)" : "var(--muted)",
+                    }}
+                  >
+                    {active ? "✓ " : ""}{dayPlan.label.split("—")[0].trim()}
+                    <span style={{ fontSize: 10, marginLeft: 6, opacity: 0.7 }}>
+                      {dayPlan.reels + dayPlan.feed + dayPlan.stories} posts
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {selectedDays.length === 0 && (
+              <div style={{ marginTop: 10, fontSize: 11, color: "var(--danger)" }}>
+                ⚠️ Selecione pelo menos um dia.
+              </div>
+            )}
+          </div>
+
+          {/* Config por dia — mostra apenas os dias selecionados */}
+          {dayConfig.filter((d) => selectedDays.includes(d.day)).map((dayPlan, dayIdx) => (
             <div key={dayPlan.day} className="card">
-              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 14, color: "var(--accent-light)" }}>
-                📅 {dayPlan.label}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, color: "var(--accent-light)" }}>
+                  📅 {dayPlan.label}
+                </div>
+                <button
+                  className="btn btn-ghost btn-xs"
+                  onClick={() => {
+                    const def = WARMUP_PRESET_2D.days.find((d) => d.day === dayPlan.day);
+                    if (def) setDayConfig((prev) => prev.map((d) => d.day === dayPlan.day ? { ...def } : d));
+                  }}
+                  title="Restaurar valores padrão deste dia"
+                >
+                  ↺ Padrão
+                </button>
               </div>
 
               <div style={{ marginBottom: 14 }}>
@@ -1049,7 +670,7 @@ export default function Warmup() {
                         min={0}
                         max={15}
                         value={dayPlan[key]}
-                        onChange={(e) => updateDayConfig(dayIdx, key, parseInt(e.target.value) || 0)}
+                        onChange={(e) => updateDayConfig(dayPlan.day, key, parseInt(e.target.value) || 0)}
                         style={{ marginTop: 4 }}
                       />
                     </div>
@@ -1057,33 +678,175 @@ export default function Warmup() {
                 </div>
               </div>
 
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
-                {[
-                  { label: "Início da janela",  key: "windowStart",    type: "time"   },
-                  { label: "Fim da janela",      key: "windowEnd",      type: "time"   },
-                  { label: "Intervalo mín (min)",key: "intervalMinMin", type: "number" },
-                  { label: "Intervalo máx (min)",key: "intervalMinMax", type: "number" },
-                ].map(({ label, key, type }) => (
-                  <div key={key}>
-                    <label>{label}</label>
-                    <input
-                      type={type}
-                      value={dayPlan[key]}
-                      min={type === "number" ? 30 : undefined}
-                      max={type === "number" ? 360 : undefined}
-                      onChange={(e) => updateDayConfig(dayIdx, key, type === "number" ? (parseInt(e.target.value) || 60) : e.target.value)}
-                    />
+              {/* ── Ritmo de postagem ── */}
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+                  ⏱ Ritmo de postagem
+                </div>
+                {(() => {
+                  const PRESETS = [
+                    { label: "1h em 1h", min: 60,  max: 75,  jitter: 8  },
+                    { label: "2h em 2h", min: 120, max: 140, jitter: 12 },
+                    { label: "3h em 3h", min: 180, max: 205, jitter: 15 },
+                    { label: "4h em 4h", min: 240, max: 265, jitter: 18 },
+                    { label: "6h em 6h", min: 360, max: 390, jitter: 20 },
+                  ];
+                  const activePreset = PRESETS.find(
+                    (p) => p.min === dayPlan.intervalMinMin && p.max === dayPlan.intervalMinMax
+                  );
+                  const isCustom = !activePreset;
+                  return (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+                      {PRESETS.map(({ label, min, max, jitter }) => {
+                        const active = activePreset?.min === min;
+                        return (
+                          <button key={label} onClick={() => {
+                            updateDayConfig(dayPlan.day, "intervalMinMin", min);
+                            updateDayConfig(dayPlan.day, "intervalMinMax", max);
+                            updateDayConfig(dayPlan.day, "jitterMin", jitter);
+                          }} style={{
+                            padding: "6px 14px", borderRadius: 20, fontSize: 12, cursor: "pointer",
+                            fontWeight: active ? 700 : 400,
+                            background: active ? "var(--accent)" : "var(--bg3)",
+                            color: active ? "#fff" : "var(--muted)",
+                            border: `1px solid ${active ? "var(--accent)" : "var(--border)"}`,
+                            transition: "all 0.12s",
+                          }}>
+                            {active ? `✓ ${label}` : label}
+                          </button>
+                        );
+                      })}
+                      <button onClick={() => {
+                        // Entra em modo personalizado limpando qualquer preset ativo
+                        updateDayConfig(dayPlan.day, "intervalMinMin", 45);
+                        updateDayConfig(dayPlan.day, "intervalMinMax", 90);
+                        updateDayConfig(dayPlan.day, "jitterMin", 5);
+                      }} style={{
+                        padding: "6px 12px", borderRadius: 20, fontSize: 12, cursor: "pointer",
+                        fontWeight: isCustom ? 700 : 400,
+                        background: isCustom ? "rgba(245,158,11,0.15)" : "var(--bg3)",
+                        color: isCustom ? "var(--warning)" : "var(--muted)",
+                        border: `1px solid ${isCustom ? "rgba(245,158,11,0.4)" : "var(--border)"}`,
+                        transition: "all 0.12s",
+                      }}>
+                        {isCustom ? "✓ Personalizado" : "✏️ Personalizado"}
+                      </button>
+                    </div>
+                  );
+                })()}
+
+                {/* Inputs de janela + intervalo personalizado */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
+                  <div>
+                    <label style={{ fontSize: 11 }}>Início da janela</label>
+                    <input type="time" value={dayPlan.windowStart}
+                      onChange={(e) => updateDayConfig(dayPlan.day, "windowStart", e.target.value)} />
                   </div>
-                ))}
+                  <div>
+                    <label style={{ fontSize: 11 }}>Fim da janela</label>
+                    <input type="time" value={dayPlan.windowEnd}
+                      onChange={(e) => updateDayConfig(dayPlan.day, "windowEnd", e.target.value)} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11 }}>Intervalo mín (min)</label>
+                    <input type="number" min={15} max={720} value={dayPlan.intervalMinMin}
+                      onChange={(e) => updateDayConfig(dayPlan.day, "intervalMinMin", parseInt(e.target.value) || 60)} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11 }}>Intervalo máx (min)</label>
+                    <input type="number" min={15} max={720} value={dayPlan.intervalMinMax}
+                      onChange={(e) => updateDayConfig(dayPlan.day, "intervalMinMax", parseInt(e.target.value) || 90)} />
+                  </div>
+                </div>
               </div>
 
-              <div style={{ marginTop: 12, padding: "8px 12px", borderRadius: 8, background: "rgba(124,92,252,0.05)", border: "1px solid rgba(124,92,252,0.15)", fontSize: 11, color: "var(--muted)" }}>
+              {/* Resumo */}
+              <div style={{ padding: "8px 12px", borderRadius: 8, background: "rgba(124,92,252,0.05)", border: "1px solid rgba(124,92,252,0.15)", fontSize: 11, color: "var(--muted)" }}>
                 📊 Total por conta: <b style={{ color: "var(--text)" }}>{dayPlan.reels + dayPlan.feed + dayPlan.stories} posts</b>
                 {" "}· Janela: <b style={{ color: "var(--text)" }}>{dayPlan.windowStart} – {dayPlan.windowEnd}</b>
-                {" "}· Jitter: <b style={{ color: "var(--text)" }}>±40min + seg aleatórios</b>
+                {" "}· Ritmo: <b style={{ color: "var(--text)" }}>
+                  {dayPlan.intervalMinMin === dayPlan.intervalMinMax
+                    ? `${dayPlan.intervalMinMin}min`
+                    : `${dayPlan.intervalMinMin}–${dayPlan.intervalMinMax}min`}
+                </b>
+                {" "}· Jitter: <b style={{ color: "var(--accent-light)" }}>
+                  ±{dayPlan.jitterMin ?? 10}min + seg aleatórios
+                </b>
               </div>
             </div>
           ))}
+
+          {/* ── Card de Loop ── */}
+          <div className="card" style={{
+            borderColor: loopEnabled ? "rgba(124,92,252,0.35)" : "var(--border)",
+            background: loopEnabled ? "rgba(124,92,252,0.04)" : "var(--bg2)",
+            transition: "all 0.2s",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: loopEnabled ? 16 : 0 }}>
+              <span style={{ fontSize: 20 }}>🔁</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 13 }}>Loop de Manutenção</div>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+                  Repete o Dia 3 por quantos dias você quiser após o aquecimento
+                </div>
+              </div>
+              <div
+                onClick={() => setLoopEnabled((p) => !p)}
+                style={{
+                  width: 44, height: 24, borderRadius: 12, cursor: "pointer",
+                  background: loopEnabled ? "var(--accent)" : "var(--border2)",
+                  position: "relative", transition: "background 0.2s", flexShrink: 0,
+                }}
+              >
+                <div style={{
+                  position: "absolute", top: 3, left: loopEnabled ? 22 : 2,
+                  width: 18, height: 18, borderRadius: "50%", background: "#fff",
+                  transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+                }} />
+              </div>
+            </div>
+
+            {loopEnabled && (
+              <div>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 10 }}>
+                  Quantos dias extras de manutenção (além dos 3 do aquecimento)?
+                </div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+                  {[3, 5, 7, 10, 14, 21, 30].map((d) => (
+                    <button
+                      key={d}
+                      onClick={() => setLoopDays(d)}
+                      className={`btn btn-sm ${loopDays === d ? "btn-primary" : "btn-ghost"}`}
+                      style={{ fontSize: 12, padding: "6px 14px" }}
+                    >
+                      {d}d
+                    </button>
+                  ))}
+                  <input
+                    type="number"
+                    min={1}
+                    max={90}
+                    value={loopDays}
+                    onChange={(e) => setLoopDays(Math.max(1, Math.min(90, parseInt(e.target.value) || 1)))}
+                    style={{ width: 70, padding: "6px 10px", fontSize: 12 }}
+                    placeholder="Custom"
+                  />
+                </div>
+                <div style={{
+                  padding: "10px 14px", borderRadius: 8,
+                  background: "rgba(124,92,252,0.06)", border: "1px solid rgba(124,92,252,0.2)",
+                  fontSize: 12, color: "var(--muted)",
+                }}>
+                  📅 Aquecimento: <b style={{ color: "var(--text)" }}>3 dias</b>
+                  {" "}+ Loop: <b style={{ color: "var(--accent-light)" }}>{loopDays} dias</b>
+                  {" "}= <b style={{ color: "var(--text)" }}>{3 + loopDays} dias no total</b>
+                  <div style={{ marginTop: 4 }}>
+                    🔁 O Dia 3 (Manutenção) se repete <b style={{ color: "var(--text)" }}>{loopDays}x</b> com os mesmos posts e horários
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
 
           <button
             className="btn btn-primary"
@@ -1108,12 +871,51 @@ export default function Warmup() {
       {/* ══ TAB: Preview da Fila ═════════════════════════════════════════════════ */}
       {tab === "preview" && (
         <div>
-          {queue.length === 0 ? (
+          {/* Usa queue local se existir, senão mostra itens já salvos do DB */}
+          {queue.length === 0 && dbQueue.length === 0 ? (
             <div style={{ textAlign: "center", padding: 60, color: "var(--muted)" }}>
               <div style={{ fontSize: 40, marginBottom: 12 }}>📅</div>
               <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 6 }}>Fila vazia</div>
               <div style={{ fontSize: 12 }}>Vá para Configuração e clique em "Gerar Fila de Aquecimento".</div>
               <button className="btn btn-ghost btn-sm" style={{ marginTop: 16 }} onClick={() => setTab("config")}>⚙️ Ir para Configuração</button>
+            </div>
+          ) : queue.length === 0 ? (
+            // Após salvar / recarregar página: mostra o que está no DB
+            <div>
+              <div style={{ marginBottom: 14, padding: "10px 14px", borderRadius: 10, background: "rgba(34,197,94,0.07)", border: "1px solid rgba(34,197,94,0.2)", fontSize: 12, color: "var(--success)" }}>
+                ✅ {dbQueue.length} posts agendados no banco. Acompanhe o andamento na aba Monitor.
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 5, maxHeight: 480, overflowY: "auto" }}>
+                {[...dbQueue].sort((a, b) => a.scheduledAt - b.scheduledAt).map((s) => {
+                  const typeIcon = { reels: "🎬", feed: "🖼", stories: "⭕" }[s.mediaCategory] || "📎";
+                  const statusColor = s.status === "done" ? "var(--success)" : s.status === "error" ? "var(--danger)" : s.status === "running" ? "var(--warning)" : "var(--muted)";
+                  return (
+                    <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 10, background: "var(--bg2)", border: "1px solid var(--border)" }}>
+                      <span style={{ fontSize: 16, flexShrink: 0 }}>{typeIcon}</span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600 }}>@{s.username}</div>
+                        <div style={{ fontSize: 11, color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {s.mediaName || (s.mediaUrl || "").split("/").pop()}
+                        </div>
+                      </div>
+                      <div style={{ flexShrink: 0, textAlign: "right" }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: statusColor, marginBottom: 3, textTransform: "uppercase" }}>{s.status}</div>
+                        <div style={{ fontSize: 11, fontWeight: 600 }}>
+                          {new Date(s.scheduledAt).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+                <button className="btn btn-ghost btn-sm" onClick={() => setTab("config")}>⚙️ Novo agendamento</button>
+                {dbQueue.some((q) => q.status === "pending") && (
+                  <button className="btn btn-danger btn-sm" onClick={cancelWarmupQueue}>
+                    🗑 Cancelar pendentes
+                  </button>
+                )}
+              </div>
             </div>
           ) : (
             <>
@@ -1146,15 +948,16 @@ export default function Warmup() {
                 </div>
               </div>
 
-              {/* Por dia */}
-              {[1, 2].map((day) => {
+              {/* Por dia — dinâmico para suportar loop */}
+              {Array.from(new Set(queue.map((s) => s.scheduledDay))).sort((a, b) => a - b).map((day) => {
                 const daySlots = queue.filter((s) => s.scheduledDay === day);
-                if (!daySlots.length) return null;
+                const isLoop   = day > WARMUP_PRESET_2D.days.length;
                 return (
                   <div key={day} style={{ marginBottom: 20 }}>
-                    <div style={{ fontWeight: 700, fontSize: 13, color: "var(--accent-light)", marginBottom: 10 }}>
-                      📅 Dia {day} — {daySlots.length} post(s)
-                    </div>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: isLoop ? "var(--success)" : "var(--accent-light)", marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
+                    {isLoop ? "🔁" : "📅"} Dia {day} — {daySlots.length} post(s)
+                    {isLoop && <span className="badge badge-success" style={{ fontSize: 10 }}>Loop</span>}
+                  </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 5, maxHeight: 300, overflowY: "auto" }}>
                       {daySlots.map((s) => {
                         const typeIcon = { reels: "🎬", feed: "🖼", stories: "⭕" }[s.mediaCategory] || "📎";
@@ -1239,12 +1042,19 @@ export default function Warmup() {
             Dados coletados via Instagram Graph API. Se detectado, pause o aquecimento por 24–48h.
           </div>
 
-          <button className="btn btn-ghost btn-sm" style={{ marginTop: 12 }} onClick={async () => {
-            const q = await dbGetAll("queue");
-            setDbQueue(q.filter((x) => x.warmup));
-          }}>
-            🔄 Recarregar dados
-          </button>
+          <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button className="btn btn-ghost btn-sm" onClick={async () => {
+              const q = await dbGetAll("queue");
+              setDbQueue(q.filter((x) => x.warmup));
+            }}>
+              🔄 Recarregar dados
+            </button>
+            {dbQueue.some((q) => q.status === "pending") && (
+              <button className="btn btn-danger btn-sm" onClick={cancelWarmupQueue}>
+                🗑 Cancelar fila pendente
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
