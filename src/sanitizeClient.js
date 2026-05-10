@@ -327,7 +327,8 @@ export async function sanitizeFile(file) {
   if (format === "jpeg") result = sanitizeJpeg(original);
   else if (format === "png")  result = sanitizePng(original);
   else if (format === "webp") result = sanitizeWebp(original);
-  else if (format === "mp4")  result = sanitizeMp4(original);
+  // MP4: sanitizeMp4 desativado — modificar atoms do moov corrompe o arquivo
+  // else if (format === "mp4")  result = sanitizeMp4(original);
   // outros formatos: retorna sem modificação mas documenta
 
   const durationMs = Math.round(performance.now() - startMs);
