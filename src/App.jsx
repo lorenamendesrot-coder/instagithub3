@@ -311,7 +311,14 @@ function SchedulerProvider({ addEntry, children }) {
     return () => clearInterval(iv);
   }, [addEntry, reload]);
 
-  const addBatch   = async (items) => { await qApi.save(items); reload(); };
+  const addBatch = async (items) => {
+    // Envia em lotes de 100 para não estourar limite de body (6MB) do Netlify
+    const BATCH = 100;
+    for (let i = 0; i < items.length; i += BATCH) {
+      await qApi.save(items.slice(i, i + BATCH));
+    }
+    reload();
+  };
   const updateItem = async (item)  => { await qApi.update(item); reload(); };
   const removeItem = async (id)    => { await qApi.remove(id); setQueue((p) => p.filter((x) => x.id !== id)); };
   const clearQueue = async ()      => { await qApi.clear(); setQueue([]); };
