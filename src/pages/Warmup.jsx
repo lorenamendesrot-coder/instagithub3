@@ -7,6 +7,7 @@ import AccountMonitorCard from "../components/warmup/WarmupAccountMonitorCard.js
 
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useAccounts } from "../useAccounts.js";
+import { useWarmupFiles } from "../App.jsx";
 import { dbPut, dbGetAll } from "../useDB.js";
 import BulkCaptions, { pickCaption } from "../components/BulkCaptions.jsx";
 import ReelChecklist from "../components/ReelChecklist.jsx";
@@ -16,8 +17,9 @@ import ReelChecklist from "../components/ReelChecklist.jsx";
 export default function Warmup() {
   const { accounts, addAccounts, reloadAccounts } = useAccounts();
 
-  const [files,        setFiles]        = useState({ reels: [], feed: [], stories: [] });
-  const filesRef = useRef({ reels: [], feed: [], stories: [] }); // sempre atualizado, evita stale closure
+  // Usa contexto global — arquivos persistem ao trocar de aba
+  const { files, setFiles, addFiles: ctxAddFiles, removeFile: ctxRemoveFile, updateFile } = useWarmupFiles();
+  const filesRef = useRef(files);
   const [uploading,    setUploading]    = useState(false);
   const [bulkCaptions, setBulkCaptions] = useState("");
   const [captionMode,  setCaptionMode]  = useState("roundrobin");
