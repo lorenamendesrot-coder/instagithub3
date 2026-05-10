@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useHistory } from "../App.jsx";
 import Modal from "../Modal.jsx";
 
@@ -32,6 +32,28 @@ export default function History() {
   }, [history, filterType, filterStatus, search]);
 
   const toggleExpanded = (id) => setExpanded((p) => ({ ...p, [id]: !p[id] }));
+
+  // ── Auto-reload ────────────────────────────────────────────────────────────
+  // 1. Escuta QUEUE_UPDATE do SW — recarrega imediatamente quando o SW publica
+  useEffect(() => {
+    const handler = () => reloadHistory();
+    window.addEventListener("sw:queue-update", handler);
+    return () => window.removeEventListener("sw:queue-update", handler);
+  }, [reloadHistory]);
+
+  // 2. Polling a cada 15s enquanto houver itens com pending_accounts
+  //    (garante atualização mesmo se a aba estava em background quando o SW publicou)
+  const hasPending = history.some((e) => (e.pending_accounts || []).length > 0);
+  const pollRef    = useRef(null);
+
+  useEffect(() => {
+    if (hasPending) {
+      pollRef.current = setInterval(reloadHistory, 15000);
+    } else {
+      clearInterval(pollRef.current);
+    }
+    return () => clearInterval(pollRef.current);
+  }, [hasPending, reloadHistory]);
 
   return (
     <div className="page">
