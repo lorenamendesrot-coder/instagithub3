@@ -21,7 +21,14 @@ export default function Warmup() {
   const [uploading,    setUploading]    = useState(false);
   const [bulkCaptions, setBulkCaptions] = useState("");
   const [captionMode,  setCaptionMode]  = useState("roundrobin");
-  const [startDate,    setStartDate]    = useState(() => new Date().toISOString().slice(0, 10));
+  const [startDate,    setStartDate]    = useState(() => {
+    // Se já passou das 21:00, começa amanhã para não gerar fila vazia hoje
+    const now = new Date();
+    if (now.getHours() >= 21) {
+      now.setDate(now.getDate() + 1);
+    }
+    return now.toISOString().slice(0, 10);
+  });
   const [distribution, setDistribution] = useState("roundrobin");
   const [useNewOnly,   setUseNewOnly]   = useState(true);
   const [selectedAccIds, setSelectedAccIds] = useState(null); // null = todas selecionadas
@@ -227,7 +234,14 @@ export default function Warmup() {
     });
     if (!generated.length) {
       const r = mediaByType.reels.length, f = mediaByType.feed.length, s = mediaByType.stories.length;
-      alert(`Nenhum post gerado. Mídias prontas: Reels=${r}, Feed=${f}, Stories=${s}\nO preset precisa de pelo menos 1 Reel com upload concluído.`);
+      const daysSummary = activeDays.map(d => `Dia${d.day}(R=${d.reels},F=${d.feed},S=${d.stories})`).join(", ");
+      alert(
+        `Nenhum post gerado.\n` +
+        `Mídias prontas: Reels=${r}, Feed=${f}, Stories=${s}\n` +
+        `Contas: ${selectedAccounts.length}\n` +
+        `Dias ativos: ${daysSummary}\n\n` +
+        `Se Reels>0 e Dias com R>0, reporte esse texto.`
+      );
       return;
     }
     setQueue(generated);
