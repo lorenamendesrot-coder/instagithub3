@@ -1,105 +1,19 @@
 // publish.mjs
 import { getStore } from "@netlify/blobs";
-import { varyMediaForAccount, detectMime } from "./sanitize-media.mjs";
-import crypto from "crypto";
 
 const GRAPH          = "https://graph.facebook.com/v21.0";
 const sleep          = (ms) => new Promise((r) => setTimeout(r, ms));
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || process.env.URL || "";
 
-// ─── Baixa mídia do R2, aplica variação por conta, re-sobe como arquivo temp ──
-async function getVariedMediaUrl(originalUrl, accountId) {
+// Variação leve — adiciona parâmetro único por conta na URL
+// O Instagram trata URLs diferentes como mídias diferentes (hash diferente)
+function getVariedMediaUrl(originalUrl, accountId) {
   try {
-    // Baixa o arquivo original do R2
-    const res = await fetch(originalUrl);
-    if (!res.ok) return originalUrl; // fallback: usa URL original
-
-    const arrayBuf = await res.arrayBuffer();
-    let buf = Buffer.from(arrayBuf);
-
-    // Detecta o tipo e aplica variação única por conta
-    const mimeType = detectMime(buf) || res.headers.get("content-type") || "video/mp4";
-    buf = varyMediaForAccount(buf, mimeType);
-
-    // Re-sobe para o R2 como arquivo temporário com nome único por conta
-    const ext     = originalUrl.split(".").pop().split("?")[0] || "mp4";
-    const tmpKey  = `tmp-${accountId}-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.${ext}`;
-    const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL;
-    const R2_BUCKET     = process.env.R2_BUCKET || "insta-midias";
-    const R2_ENDPOINT   = `${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
-
-    // Gera presigned URL para PUT
-    const presignedUrl = await generatePutPresigned(tmpKey, mimeType, R2_BUCKET, R2_ENDPOINT);
-    if (!presignedUrl) return originalUrl;
-
-    const putRes = await fetch(presignedUrl, {
-      method: "PUT",
-      headers: { "Content-Type": mimeType },
-      body: buf,
-    });
-    if (!putRes.ok) return originalUrl;
-
-    return `${R2_PUBLIC_URL}/${tmpKey}`;
+    const url = new URL(originalUrl);
+    url.searchParams.set("_v", accountId.toString().slice(-8));
+    return url.toString();
   } catch {
-    return originalUrl; // fallback seguro
-  }
-}
-
-function hmac(key, data) {
-  return crypto.createHmac("sha256", key).update(data).digest();
-}
-function sha256hex(data) {
-  return crypto.createHash("sha256").update(data).digest("hex");
-}
-function getAmzDate(date) {
-  return date.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z").slice(0, 16);
-}
-
-async function generatePutPresigned(key, mimeType, bucket, endpoint) {
-  try {
-    const R2_ACCESS_KEY = process.env.R2_ACCESS_KEY;
-    const R2_SECRET_KEY = process.env.R2_SECRET_KEY;
-    if (!R2_ACCESS_KEY || !R2_SECRET_KEY) return null;
-
-    const now           = new Date();
-    const amzDate       = getAmzDate(now);
-    const dateStamp     = amzDate.slice(0, 8);
-    const region        = "auto";
-    const service       = "s3";
-    const credScope     = `${dateStamp}/${region}/${service}/aws4_request`;
-    const credential    = `${R2_ACCESS_KEY}/${credScope}`;
-
-    const queryParams = [
-      ["X-Amz-Algorithm",     "AWS4-HMAC-SHA256"],
-      ["X-Amz-Credential",    credential],
-      ["X-Amz-Date",          amzDate],
-      ["X-Amz-Expires",       "300"],
-      ["X-Amz-SignedHeaders",  "content-type;host"],
-    ].sort(([a], [b]) => a.localeCompare(b));
-
-    const sortedQuery = queryParams
-      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-      .join("&");
-
-    const canonicalReq = [
-      "PUT",
-      `/${bucket}/${key}`,
-      sortedQuery,
-      `content-type:${mimeType}\nhost:${endpoint}\n`,
-      "content-type;host",
-      "UNSIGNED-PAYLOAD",
-    ].join("\n");
-
-    const stringToSign = [
-      "AWS4-HMAC-SHA256", amzDate, credScope, sha256hex(canonicalReq),
-    ].join("\n");
-
-    const sigKey  = hmac(hmac(hmac(hmac("AWS4" + R2_SECRET_KEY, dateStamp), region), service), "aws4_request");
-    const sig     = crypto.createHmac("sha256", sigKey).update(stringToSign).digest("hex");
-
-    return `https://${endpoint}/${bucket}/${key}?${sortedQuery}&X-Amz-Signature=${sig}`;
-  } catch {
-    return null;
+    return originalUrl;
   }
 }
 
@@ -208,9 +122,8 @@ async function publishOne({ account, media_url, media_type, post_type, caption }
 
   const isVideo = media_type === "VIDEO";
 
-  // ── Aplica variação única por conta (metadados diferentes para cada uma) ──
-  const variedUrl = await getVariedMediaUrl(media_url, account.id);
-  const finalUrl  = variedUrl;
+  // Variação leve da URL por conta (hash diferente sem re-upload)
+  const finalUrl = getVariedMediaUrl(media_url, account.id);
 
   let payload = { access_token: token };
 
