@@ -60,18 +60,64 @@ function HistoryProvider({ children }) {
   );
 }
 
-// ─── Scheduler Context — roda globalmente independente de qual aba está aberta ─
+// ─── WarmupContext — persiste arquivos de upload entre trocas de aba ──────────
+const WarmupContext = createContext(null);
+export const useWarmupFiles = () => useContext(WarmupContext);
+
+function WarmupProvider({ children }) {
+  const [files, setFiles] = useState({ reels: [], feed: [], stories: [] });
+
+  const addFiles = useCallback((typeId, newFiles) => {
+    const entries = Array.from(newFiles).map((file) => ({
+      id: `${typeId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      file, name: file.name, size: file.size,
+      status: "idle", progress: 0, url: "", error: "", typeId,
+    }));
+    setFiles((prev) => ({ ...prev, [typeId]: [...(prev[typeId] || []), ...entries] }));
+  }, []);
+
+  const removeFile = useCallback((typeId, fileId) => {
+    setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].filter((f) => f.id !== fileId) }));
+  }, []);
+
+  const updateFile = useCallback((typeId, fileId, patch) => {
+    setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === fileId ? { ...f, ...patch } : f) }));
+  }, []);
+
+  const clearFiles = useCallback((typeId) => {
+    if (typeId) setFiles((prev) => ({ ...prev, [typeId]: [] }));
+    else setFiles({ reels: [], feed: [], stories: [] });
+  }, []);
+
+  return (
+    <WarmupContext.Provider value={{ files, setFiles, addFiles, removeFile, updateFile, clearFiles }}>
+      {children}
+    </WarmupContext.Provider>
+  );
+}
 const SchedulerContext = createContext(null);
 export const useScheduler = () => useContext(SchedulerContext);
+
+// Helpers para a fila no Blobs (acessível de qualquer dispositivo)
+const qApi = {
+  getAll:  ()       => fetch("/api/queue").then((r) => r.json()).catch(() => []),
+  save:    (items)  => fetch("/api/queue", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(Array.isArray(items) ? items : [items]) }).catch(() => {}),
+  update:  (item)   => fetch("/api/queue", { method: "PUT",  headers: { "Content-Type": "application/json" }, body: JSON.stringify(item) }).then((r) => r.json()).catch(() => item),
+  remove:  (id)     => fetch(`/api/queue?id=${id}`, { method: "DELETE" }).catch(() => {}),
+  clear:   ()       => fetch("/api/queue", { method: "DELETE" }).catch(() => {}),
+};
 
 function SchedulerProvider({ addEntry, children }) {
   const [queue, setQueue] = useState([]);
   const runningRef = useRef(new Set());
 
   const reload = useCallback(async () => {
-    const all = await dbGetAll("queue");
-    all.sort((a, b) => a.scheduledAt - b.scheduledAt);
+    const all = await qApi.getAll();
+    if (!Array.isArray(all)) return;
+    all.sort((a, b) => (a.scheduledAt || 0) - (b.scheduledAt || 0));
     setQueue(all);
+    // Espelha no IndexedDB local para o SW
+    try { await dbClear("queue"); await dbPutMany("queue", all); } catch {}
   }, []);
 
   useEffect(() => {
@@ -81,30 +127,32 @@ function SchedulerProvider({ addEntry, children }) {
     return () => window.removeEventListener("sw:queue-update", h);
   }, [reload]);
 
-  // ─── Tick do scheduler — roda a cada 10s globalmente ───────────────────────
+  // ─── Tick do scheduler ───────────────────────────────────────────────────────
   useEffect(() => {
-    // Ao montar: reseta itens "running" que ficaram travados (ex: após reload da página)
+    // Reseta itens "running" travados
     const resetStuck = async () => {
-      const all = await dbGetAll("queue");
+      const all = await qApi.getAll();
+      if (!Array.isArray(all)) return;
       const stuck = all.filter((x) => x.status === "running");
       for (const item of stuck) {
-        await dbPut("queue", { ...item, status: "pending", scheduledAt: Date.now() + 5000 });
+        await qApi.update({ ...item, status: "pending", scheduledAt: Date.now() + 5000 });
       }
     };
     resetStuck().catch(() => {});
 
     const tick = async () => {
-      const all = await dbGetAll("queue");
-      const now = Date.now();
-      const due = all.filter((x) => !x.type && x.scheduledAt <= now && x.status === "pending");
+      const all = await qApi.getAll();
+      if (!Array.isArray(all)) return;
+      const now    = Date.now();
+      const due    = all.filter((x) => !x.type && x.scheduledAt <= now && x.status === "pending");
       const dueFin = all.filter((x) => x.type === "video_finish" && x.status === "pending" && x.scheduledAt <= now);
 
-      // Processar video_finish (fallback quando o SW não está ativo)
+      // Processar video_finish
       for (const vf of dueFin) {
         if (runningRef.current.has(vf.id)) continue;
         runningRef.current.add(vf.id);
         try {
-          await dbPut("queue", { ...vf, status: "running" });
+          await qApi.update({ ...vf, status: "running" });
           const res = await fetch("/.netlify/functions/publish-finish", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -125,7 +173,7 @@ function SchedulerProvider({ addEntry, children }) {
               const updatedPending = (histEntry.pending_accounts || []).filter((a) => a.account_id !== vf.account_id);
               await dbPut("history", { ...histEntry, results: updatedResults, pending_accounts: updatedPending });
             }
-            await dbPut("queue", { ...vf, status: "done", result, finishedAt: new Date().toISOString() });
+            await qApi.update({ ...vf, status: "done", result, finishedAt: new Date().toISOString() });
           } else if (result && !result.success) {
             const all2 = await dbGetAll("history");
             const histEntry = all2.find((h) => h.id === vf.historyId) || null;
@@ -134,23 +182,21 @@ function SchedulerProvider({ addEntry, children }) {
               const updatedPending = (histEntry.pending_accounts || []).filter((a) => a.account_id !== vf.account_id);
               await dbPut("history", { ...histEntry, results: updatedResults, pending_accounts: updatedPending });
             }
-            await dbPut("queue", { ...vf, status: "error", error: result.error });
+            await qApi.update({ ...vf, status: "error", error: result.error });
           } else {
-            // Ainda processando — reagenda
             const attempts = (vf.attempts || 0) + 1;
             if (attempts >= (vf.maxAttempts || 20)) {
-              await dbPut("queue", { ...vf, status: "error", error: "Timeout: vídeo não processou" });
+              await qApi.update({ ...vf, status: "error", error: "Timeout: vídeo não processou" });
             } else {
-              await dbPut("queue", { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 20000 });
+              await qApi.update({ ...vf, status: "pending", attempts, scheduledAt: Date.now() + 20000 });
             }
           }
         } catch (err) {
-          // Garante que o item sai de "running" mesmo em caso de erro inesperado
           const attempts = (vf.attempts || 0) + 1;
           if (attempts >= (vf.maxAttempts || 20)) {
-            await dbPut("queue", { ...vf, status: "error", error: err.message }).catch(() => {});
+            await qApi.update({ ...vf, status: "error", error: err.message }).catch(() => {});
           } else {
-            await dbPut("queue", { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 20000 }).catch(() => {});
+            await qApi.update({ ...vf, status: "pending", attempts, scheduledAt: Date.now() + 20000 }).catch(() => {});
           }
         } finally {
           runningRef.current.delete(vf.id);
@@ -163,7 +209,7 @@ function SchedulerProvider({ addEntry, children }) {
       for (const item of due) {
         if (runningRef.current.has(item.id)) continue;
         runningRef.current.add(item.id);
-        await dbPut("queue", { ...item, status: "running" });
+        await qApi.update({ ...item, status: "running" });
         reload();
 
         try {
@@ -176,47 +222,38 @@ function SchedulerProvider({ addEntry, children }) {
             const MAX_RETRIES = 3;
             let res, lastErr;
             for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-              if (attempt > 0) {
-                const waitMs = 5000 * Math.pow(3, attempt - 1);
-                await new Promise(r => setTimeout(r, waitMs));
-              }
+              if (attempt > 0) await new Promise(r => setTimeout(r, 5000 * Math.pow(3, attempt - 1)));
               try {
                 res = await fetch("/.netlify/functions/publish", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({
-                    accounts: item.accounts,
-                    media_url: mediaUrl,
-                    media_type: item.mediaType,
-                    post_type: item.postType,
-                    captions: item.captions || {},
-                    default_caption: item.caption || "",
-                    delay_seconds: 0,
+                    accounts:        item.accounts,
+                    media_url:       mediaUrl,
+                    media_type:      item.mediaType,
+                    post_type:       item.postType,
+                    captions:        item.captions || {},
+                    default_caption: item.caption  || "",
+                    delay_seconds:   0,
                     skip_rate_limit: !!item.warmup,
                   }),
                 });
                 if (res.ok || (res.status >= 400 && res.status < 500)) break;
                 lastErr = new Error(`HTTP ${res.status}`);
-              } catch (fetchErr) {
-                lastErr = fetchErr;
-                res = null;
-              }
+              } catch (fetchErr) { lastErr = fetchErr; res = null; }
             }
 
             if (!res || !res.ok) throw lastErr || new Error(`HTTP ${res?.status}`);
-            const data = await res.json();
+            const data    = await res.json();
             const results = data.results || [];
 
-            // Separar contas com vídeo ainda processando das já finalizadas
             const pendingResults  = results.filter((r) => r.pending && r.creation_id);
             const finishedResults = results.filter((r) => !r.pending);
+            const historyId       = `h-${Date.now()}-${mi}`;
 
-            const historyId = `h-${Date.now()}-${mi}`;
-
-            // Para cada conta com vídeo pendente, criar item video_finish na fila
             for (const pr of pendingResults) {
               const vfId = `vf-${historyId}-${pr.account_id}`;
-              await dbPut("queue", {
+              await qApi.save({
                 id:          vfId,
                 type:        "video_finish",
                 status:      "pending",
@@ -242,26 +279,26 @@ function SchedulerProvider({ addEntry, children }) {
             }));
 
             await addEntry({
-              id: historyId,
-              post_type: item.postType,
-              media_url: mediaUrl,
-              media_type: item.mediaType,
-              default_caption: item.caption,
-              results: finishedResults,
+              id:               historyId,
+              post_type:        item.postType,
+              media_url:        mediaUrl,
+              media_type:       item.mediaType,
+              default_caption:  item.caption,
+              results:          finishedResults,
               pending_accounts: pendingAccounts,
-              created_at: new Date().toISOString(),
-              from_scheduler: true,
-              source: item.warmup ? "warmup" : "schedule",
+              created_at:       new Date().toISOString(),
+              from_scheduler:   true,
+              source:           item.warmup ? "warmup" : "schedule",
             });
           }
 
           if (item.loop) {
-            await dbPut("queue", { ...item, status: "pending", scheduledAt: item.scheduledAt + 86400000, runCount: (item.runCount || 0) + 1 });
+            await qApi.update({ ...item, status: "pending", scheduledAt: item.scheduledAt + 86400000, runCount: (item.runCount || 0) + 1 });
           } else {
-            await dbPut("queue", { ...item, status: "done" });
+            await qApi.update({ ...item, status: "done" });
           }
         } catch (err) {
-          await dbPut("queue", { ...item, status: "error", error: err.message, failedAt: new Date().toISOString(), retryCount: (item.retryCount || 0) + 1 });
+          await qApi.update({ ...item, status: "error", error: err.message, failedAt: new Date().toISOString(), retryCount: (item.retryCount || 0) + 1 });
         }
 
         runningRef.current.delete(item.id);
@@ -270,14 +307,14 @@ function SchedulerProvider({ addEntry, children }) {
     };
 
     const iv = setInterval(tick, 10000);
-    tick(); // roda imediatamente ao montar
+    tick();
     return () => clearInterval(iv);
   }, [addEntry, reload]);
 
-  const addBatch   = async (b) => { await dbPutMany("queue", b); reload(); };
-  const updateItem = async (item) => { await dbPut("queue", item); reload(); };
-  const removeItem = async (id) => { await dbDelete("queue", id); setQueue((p) => p.filter((x) => x.id !== id)); };
-  const clearQueue = async () => { await dbClear("queue"); setQueue([]); };
+  const addBatch   = async (items) => { await qApi.save(items); reload(); };
+  const updateItem = async (item)  => { await qApi.update(item); reload(); };
+  const removeItem = async (id)    => { await qApi.remove(id); setQueue((p) => p.filter((x) => x.id !== id)); };
+  const clearQueue = async ()      => { await qApi.clear(); setQueue([]); };
 
   return (
     <SchedulerContext.Provider value={{ queue, addBatch, updateItem, removeItem, clearQueue, reload }}>
@@ -388,7 +425,9 @@ function AppShell() {
 export default function App() {
   return (
     <HistoryProvider>
-      <AppShell />
+      <WarmupProvider>
+        <AppShell />
+      </WarmupProvider>
     </HistoryProvider>
   );
 }
