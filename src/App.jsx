@@ -69,6 +69,16 @@ function SchedulerProvider({ addEntry, children }) {
 
   // ─── Tick do scheduler — roda a cada 10s globalmente ───────────────────────
   useEffect(() => {
+    // Ao montar: reseta itens "running" que ficaram travados (ex: após reload da página)
+    const resetStuck = async () => {
+      const all = await dbGetAll("queue");
+      const stuck = all.filter((x) => x.status === "running");
+      for (const item of stuck) {
+        await dbPut("queue", { ...item, status: "pending", scheduledAt: Date.now() + 5000 });
+      }
+    };
+    resetStuck().catch(() => {});
+
     const tick = async () => {
       const all = await dbGetAll("queue");
       const now = Date.now();
@@ -79,8 +89,8 @@ function SchedulerProvider({ addEntry, children }) {
       for (const vf of dueFin) {
         if (runningRef.current.has(vf.id)) continue;
         runningRef.current.add(vf.id);
-        await dbPut("queue", { ...vf, status: "running" });
         try {
+          await dbPut("queue", { ...vf, status: "running" });
           const res = await fetch("/.netlify/functions/publish-finish", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -93,10 +103,8 @@ function SchedulerProvider({ addEntry, children }) {
           const data   = await res.json();
           const result = (data.results || [])[0];
           if (result?.success) {
-            const histEntry = await (async () => {
-              const all2 = await dbGetAll("history");
-              return all2.find((h) => h.id === vf.historyId) || null;
-            })();
+            const all2 = await dbGetAll("history");
+            const histEntry = all2.find((h) => h.id === vf.historyId) || null;
             if (histEntry) {
               const prevResults    = (histEntry.results || []).filter((r) => r.account_id !== vf.account_id);
               const updatedResults = [...prevResults, result];
@@ -105,10 +113,8 @@ function SchedulerProvider({ addEntry, children }) {
             }
             await dbPut("queue", { ...vf, status: "done", result, finishedAt: new Date().toISOString() });
           } else if (result && !result.success) {
-            const histEntry = await (async () => {
-              const all2 = await dbGetAll("history");
-              return all2.find((h) => h.id === vf.historyId) || null;
-            })();
+            const all2 = await dbGetAll("history");
+            const histEntry = all2.find((h) => h.id === vf.historyId) || null;
             if (histEntry) {
               const updatedResults = [...(histEntry.results || []), { account_id: vf.account_id, username: vf.username, success: false, error: result.error }];
               const updatedPending = (histEntry.pending_accounts || []).filter((a) => a.account_id !== vf.account_id);
@@ -125,14 +131,16 @@ function SchedulerProvider({ addEntry, children }) {
             }
           }
         } catch (err) {
+          // Garante que o item sai de "running" mesmo em caso de erro inesperado
           const attempts = (vf.attempts || 0) + 1;
           if (attempts >= (vf.maxAttempts || 20)) {
-            await dbPut("queue", { ...vf, status: "error", error: err.message });
+            await dbPut("queue", { ...vf, status: "error", error: err.message }).catch(() => {});
           } else {
-            await dbPut("queue", { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 20000 });
+            await dbPut("queue", { ...vf, status: "pending", attempts, scheduledAt: Date.now() + 20000 }).catch(() => {});
           }
+        } finally {
+          runningRef.current.delete(vf.id);
         }
-        runningRef.current.delete(vf.id);
         reload();
       }
 
