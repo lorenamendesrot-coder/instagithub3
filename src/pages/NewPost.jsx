@@ -110,6 +110,7 @@ export default function NewPost() {
       delay_seconds: delaySeconds,
       results,
       created_at: new Date().toISOString(),
+      source: "new_post",
     });
     setProgress({ current: results.length, total: selected.length, results });
     setLoading(false);

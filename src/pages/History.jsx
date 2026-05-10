@@ -2,7 +2,11 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { useHistory } from "../App.jsx";
 import Modal from "../Modal.jsx";
 
-const STATUS_BADGE = { published: "badge-success", failed: "badge-danger", success: "badge-success" };
+const SOURCE_BADGE = {
+  new_post: { label: "✨ Novo Post", bg: "rgba(124,92,252,0.1)",  border: "rgba(124,92,252,0.25)", color: "var(--accent-light)" },
+  schedule:  { label: "🗓 Agendado",  bg: "rgba(56,189,248,0.1)",  border: "rgba(56,189,248,0.25)", color: "var(--info)"         },
+  warmup:    { label: "🔥 Aquecimento", bg: "rgba(245,158,11,0.1)", border: "rgba(245,158,11,0.25)", color: "var(--warning)"    },
+};
 const TYPE_ICON = { FEED: "🖼", REEL: "🎬", STORY: "⭕" };
 const TYPE_LABEL = { FEED: "Feed", REEL: "Reel", STORY: "Story" };
 
@@ -151,7 +155,14 @@ export default function History() {
                       <span className={`badge ${successCount === finishedCount && pendingCount === 0 ? "badge-success" : successCount === 0 && pendingCount === 0 ? "badge-danger" : "badge-warning"}`}>
                         {successCount}/{totalCount} publicado(s)
                       </span>
-                      {entry.from_scheduler && <span className="badge badge-purple">Agendado</span>}
+                      {(() => {
+                        const src = SOURCE_BADGE[entry.source] || (entry.from_scheduler ? SOURCE_BADGE.schedule : SOURCE_BADGE.new_post);
+                        return (
+                          <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 20, fontWeight: 600, background: src.bg, border: `1px solid ${src.border}`, color: src.color }}>
+                            {src.label}
+                          </span>
+                        );
+                      })()}
                       <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: "auto" }}>
                         {new Date(entry.created_at).toLocaleString("pt-BR")}
                       </span>
