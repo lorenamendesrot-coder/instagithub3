@@ -7,7 +7,7 @@ import AccountMonitorCard from "../components/warmup/WarmupAccountMonitorCard.js
 
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useAccounts } from "../useAccounts.js";
-import { useWarmupFiles } from "../App.jsx";
+import { useWarmupFiles, useScheduler } from "../App.jsx";
 import { dbPut, dbGetAll } from "../useDB.js";
 import BulkCaptions, { pickCaption } from "../components/BulkCaptions.jsx";
 import ReelChecklist from "../components/ReelChecklist.jsx";
@@ -16,6 +16,7 @@ import ReelChecklist from "../components/ReelChecklist.jsx";
 
 export default function Warmup() {
   const { accounts, addAccounts, reloadAccounts } = useAccounts();
+  const { addBatch } = useScheduler();
 
   // Usa contexto global — arquivos persistem ao trocar de aba
   const warmupCtx = useWarmupFiles();
@@ -283,7 +284,7 @@ export default function Warmup() {
     if (!queue.length) return;
     setSaving(true);
     try {
-      for (const item of queue) await dbPut("queue", item);
+      await addBatch(queue);
       window.dispatchEvent(new CustomEvent("sw:queue-update"));
       setSaved(true);
       setTab("monitor");
@@ -294,7 +295,7 @@ export default function Warmup() {
     } finally {
       setSaving(false);
     }
-  }, [queue]);
+  }, [queue, addBatch]);
 
   const updateDayConfig = (dayNum, key, value) => {
     setDayConfig((prev) =>
