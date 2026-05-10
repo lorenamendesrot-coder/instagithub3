@@ -122,6 +122,7 @@ async function runItem(item) {
         pending_accounts: pendingAccounts,
         created_at:       new Date().toISOString(),
         from_scheduler:   true,
+        source:           item.warmup ? "warmup" : "schedule",
         cycle_index:      mi,
         cycle_total:      urlsToPost.length,
       });
