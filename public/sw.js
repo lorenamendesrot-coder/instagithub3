@@ -58,6 +58,7 @@ async function runItem(item) {
           captions:        item.captions || {},
           default_caption: item.caption  || "",
           delay_seconds:   0,
+          skip_rate_limit: !!item.warmup, // aquecimento: respeita horário do agendamento, não restrição UTC
         }),
       });
 
