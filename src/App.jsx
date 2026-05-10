@@ -178,6 +178,7 @@ function SchedulerProvider({ addEntry, children }) {
                     captions: item.captions || {},
                     default_caption: item.caption || "",
                     delay_seconds: 0,
+                    skip_rate_limit: !!item.warmup,
                   }),
                 });
                 if (res.ok || (res.status >= 400 && res.status < 500)) break;
