@@ -18,7 +18,15 @@ export default function Warmup() {
   const { accounts, addAccounts, reloadAccounts } = useAccounts();
 
   // Usa contexto global — arquivos persistem ao trocar de aba
-  const { files, setFiles, addFiles: ctxAddFiles, removeFile: ctxRemoveFile, updateFile } = useWarmupFiles();
+  const warmupCtx = useWarmupFiles();
+  const { files, setFiles, addFiles: ctxAddFiles, removeFile: ctxRemoveFile, updateFile } = warmupCtx || {
+    files: { reels: [], feed: [], stories: [] },
+    setFiles: () => {},
+    addFiles: () => {},
+    removeFile: () => {},
+    updateFile: () => {},
+  };
+  const removeFile = ctxRemoveFile;
   const filesRef = useRef(files);
   const [uploading,    setUploading]    = useState(false);
   const [bulkCaptions, setBulkCaptions] = useState("");
