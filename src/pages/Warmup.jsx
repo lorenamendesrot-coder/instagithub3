@@ -124,8 +124,13 @@ export default function Warmup() {
     setFiles((prev) => ({ ...prev, [typeId]: [...(prev[typeId] || []), ...entries] }));
   }, []);
 
-  const removeFile = useCallback((typeId, fileId) => {
-    setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].filter((f) => f.id !== fileId) }));
+  const removeAllFiles = useCallback((typeId) => {
+    setFiles((prev) => ({ ...prev, [typeId]: [] }));
+  }, [setFiles]);
+
+  const resetAllFiles = useCallback(() => {
+    setFiles({ reels: [], feed: [], stories: [] });
+  }, [setFiles]);
   }, []);
 
   // Adiciona mídias a partir de URLs externas (já prontas, sem upload)
@@ -353,6 +358,18 @@ export default function Warmup() {
       {/* ══ TAB: Upload ══════════════════════════════════════════════════════════ */}
       {tab === "upload" && (
         <div>
+          {/* Botão reset geral — só aparece se há arquivos */}
+          {(stats.reelsTotal > 0 || stats.feedTotal > 0 || stats.storiesTotal > 0) && (
+            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+              <button
+                className="btn btn-ghost btn-sm"
+                style={{ fontSize: 11, color: "var(--danger)", borderColor: "rgba(239,68,68,0.3)" }}
+                onClick={resetAllFiles}
+              >
+                🗑 Resetar todos os uploads
+              </button>
+            </div>
+          )}
           <div style={{
             padding: "12px 16px", borderRadius: 10, marginBottom: 20,
             background: "rgba(124,92,252,0.06)", border: "1px solid rgba(124,92,252,0.2)",
@@ -374,6 +391,7 @@ export default function Warmup() {
                   files={files}
                   onAddFiles={addFiles}
                   onRemoveFile={removeFile}
+                  onRemoveAll={removeAllFiles}
                   onUploadAll={uploadAll}
                   uploading={uploading}
                   urlInput={urlInputs[typeConfig.id]}
