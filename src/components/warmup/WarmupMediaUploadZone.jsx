@@ -1,7 +1,7 @@
 // WarmupMediaUploadZone.jsx — zona de upload de mídias do aquecimento
 import { useState, useRef, useCallback } from "react";
 
-export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemoveFile, onUploadAll, uploading, urlInput, onUrlInputChange, onAddUrl }) {
+export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemoveFile, onRemoveAll, onUploadAll, uploading, urlInput, onUrlInputChange, onAddUrl }) {
   const [dragging,    setDragging]    = useState(false);
   const [showBulkUrl, setShowBulkUrl] = useState(false);
   const inputRef = useRef();
@@ -40,6 +40,15 @@ export default function MediaUploadZone({ typeConfig, files, onAddFiles, onRemov
           <span className="badge badge-success" style={{ fontSize: 10 }}>
             {done.length} pronto{done.length > 1 ? "s" : ""}
           </span>
+        )}
+        {myFiles.length > 0 && (
+          <button
+            onClick={() => onRemoveAll(typeConfig.id)}
+            title="Limpar todos"
+            style={{ background: "none", color: "var(--muted)", fontSize: 12, padding: "2px 6px", borderRadius: 6, border: "1px solid var(--border)", cursor: "pointer", flexShrink: 0 }}
+          >
+            🗑 Limpar
+          </button>
         )}
       </div>
 
