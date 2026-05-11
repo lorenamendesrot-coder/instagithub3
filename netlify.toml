@@ -35,3 +35,6 @@
 
 [functions."publish-finish"]
   timeout = 26
+
+[functions."filegarden-proxy"]
+  timeout = 26
