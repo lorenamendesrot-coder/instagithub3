@@ -1,5 +1,5 @@
 // Warmup.jsx
-import { uploadFile, warmupDay, isNewAccount, buildWarmupQueue, shadowScore, fmtSize, NEW_ACCOUNT_DAYS, WARMUP_PRESET_2D, TABS, MEDIA_TYPES } from "../components/warmup/WarmupUtils.js";
+import { uploadFile, uploadFileGarden, warmupDay, isNewAccount, buildWarmupQueue, shadowScore, fmtSize, NEW_ACCOUNT_DAYS, WARMUP_PRESET_2D, TABS, MEDIA_TYPES } from "../components/warmup/WarmupUtils.js";
 import MediaUploadZone from "../components/warmup/WarmupMediaUploadZone.jsx";
 import AccountMonitorCard from "../components/warmup/WarmupAccountMonitorCard.jsx";
 // Foco: aquecimento rápido em 2 dias, Reels-first, proteção de contas novas
@@ -30,6 +30,7 @@ export default function Warmup() {
   const removeFile = ctxRemoveFile;
   const filesRef = useRef(files);
   const [uploading,    setUploading]    = useState(false);
+  const [uploadMethod, setUploadMethod] = useState("r2"); // "r2" ou "filegarden"
   const [bulkCaptions, setBulkCaptions] = useState("");
   const [captionMode,  setCaptionMode]  = useState("roundrobin");
   const [startDate,    setStartDate]    = useState(() => {
@@ -187,16 +188,23 @@ export default function Warmup() {
     const uploadOne = async (entry) => {
       try {
         let sanitizationReport = null;
-        const url = await uploadFile(
-          entry.file,
-          (progress) => {
-            setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, progress } : f) }));
-          },
-          (report) => {
-            sanitizationReport = report;
-            setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, sanitizationReport: report } : f) }));
-          }
-        );
+        const onProgress = (progress) => {
+          setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, progress } : f) }));
+        };
+
+        let url;
+        if (uploadMethod === "filegarden") {
+          url = await uploadFileGarden(entry.file, onProgress);
+        } else {
+          url = await uploadFile(
+            entry.file,
+            onProgress,
+            (report) => {
+              sanitizationReport = report;
+              setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, sanitizationReport: report } : f) }));
+            }
+          );
+        }
         setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, status: "done", url, progress: 100, sanitizationReport } : f) }));
       } catch (err) {
         setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, status: "error", error: err.message } : f) }));
@@ -378,6 +386,25 @@ export default function Warmup() {
               </button>
             </div>
           )}
+          {/* Seletor de método de upload */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600 }}>Destino:</span>
+            {[
+              { id: "r2",         label: "☁️ Cloudflare R2", desc: "Recomendado — sem limite de tamanho" },
+              { id: "filegarden", label: "🌿 FilGarden",      desc: "Alternativo — até ~100MB" },
+            ].map(({ id, label, desc }) => (
+              <button key={id} onClick={() => setUploadMethod(id)}
+                className={`btn btn-sm ${uploadMethod === id ? "btn-primary" : "btn-ghost"}`}
+                style={{ fontSize: 11 }} title={desc}>
+                {label}
+              </button>
+            ))}
+            {uploadMethod === "filegarden" && (
+              <span style={{ fontSize: 11, color: "var(--warning)", background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.2)", padding: "2px 8px", borderRadius: 8 }}>
+                ⚠️ Arquivos ficam públicos no FilGarden
+              </span>
+            )}
+          </div>
           <div style={{
             padding: "12px 16px", borderRadius: 10, marginBottom: 20,
             background: "rgba(124,92,252,0.06)", border: "1px solid rgba(124,92,252,0.2)",
