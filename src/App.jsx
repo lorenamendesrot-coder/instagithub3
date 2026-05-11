@@ -3,8 +3,6 @@ import { useEffect, useState, useCallback, useRef, createContext, useContext } f
 
 // Páginas
 import Accounts from "./pages/Accounts.jsx";
-import NewPost   from "./pages/NewPost.jsx";
-import Schedule  from "./pages/Schedule.jsx";
 import Queue     from "./pages/Queue.jsx";
 import History   from "./pages/History.jsx";
 import Warmup      from "./pages/Warmup.jsx";
@@ -400,8 +398,6 @@ function AppShell() {
 
           <Routes>
             <Route path="/"            element={<Accounts />} />
-            <Route path="/novo"        element={<NewPost />} />
-            <Route path="/agendar"     element={<Schedule />} />
             <Route path="/fila"        element={<Queue />} />
             <Route path="/historico"   element={<History />} />
             <Route path="/aquecimento" element={<Warmup />} />

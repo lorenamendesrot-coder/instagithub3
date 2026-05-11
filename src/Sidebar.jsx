@@ -3,8 +3,6 @@ import { NavLink } from "react-router-dom";
 
 const NAV = [
   { to: "/",           label: "Contas",       icon: "👤", desc: "Gerencie suas contas" },
-  { to: "/novo",       label: "Novo Post",    icon: "✨", desc: "Criar publicação"     },
-  { to: "/agendar",   label: "Agendar",      icon: "🗓️", desc: "Programar posts"      },
   { to: "/fila",      label: "Fila",         icon: "🗂️", desc: "Agendamentos ativos"   },
   { to: "/historico",  label: "Histórico",    icon: "📊", desc: "Posts publicados"     },
   { to: "/aquecimento",label: "Aquecimento",  icon: "🔥", desc: "Aquecer contas"       },
