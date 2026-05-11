@@ -77,9 +77,34 @@ export function isNewAccount(acc) {
   return warmupDay(acc.connected_at || new Date().toISOString()) <= NEW_ACCOUNT_DAYS;
 }
 
+// Upload via FilGarden (alternativa ao R2)
+export async function uploadFileGarden(file, onProgress) {
+  onProgress(5);
+  const base64 = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = () => resolve(reader.result.split(",")[1]);
+    reader.onerror = () => reject(new Error("Erro ao ler arquivo"));
+    reader.readAsDataURL(file);
+  });
+  onProgress(30);
+  const res = await fetch("/api/filegarden-proxy", {
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ fileBase64: base64, fileName: file.name, mimeType: file.type || "video/mp4" }),
+  });
+  onProgress(90);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `FilGarden HTTP ${res.status}`);
+  }
+  const { url } = await res.json();
+  if (!url) throw new Error("FilGarden não retornou URL");
+  onProgress(100);
+  return url;
+}
+
 // Upload direto do browser para R2 via presigned URL — sem limite de tamanho
 export async function uploadFile(file, onProgress, onSanitized) {
-  onProgress(2);
 
   // Passo 1: obter presigned URL
   const presignRes = await fetch("/api/r2-presign", {
