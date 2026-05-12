@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useAccounts } from "../App.jsx";
+import { useOAuthPopup } from "../useOAuthPopup.js";
 import { dbPut } from "../useDB.js";
 import Modal from "../Modal.jsx";
 import AccountAvatar from "../components/accounts/AccountAvatar.jsx";
@@ -220,7 +221,19 @@ export default function Accounts() {
   const APP_ID   = import.meta.env.VITE_META_APP_ID;
   const REDIRECT = encodeURIComponent(window.location.origin + "/api/auth-callback");
   const SCOPE    = "instagram_basic,instagram_content_publish,instagram_manage_insights,pages_read_engagement,pages_show_list,pages_manage_posts,business_management,pages_manage_metadata";
-  const oauthUrl = `https://www.facebook.com/v21.0/dialog/oauth?client_id=${APP_ID}&redirect_uri=${REDIRECT}&scope=${SCOPE}&response_type=code`;
+  const oauthUrl = `https://www.facebook.com/v21.0/dialog/oauth?client_id=${APP_ID}&redirect_uri=${REDIRECT}&scope=${SCOPE}&response_type=code&state=popup`;
+
+  const { status: oauthStatus, errorMsg: oauthError, openPopup, reset: resetOauth } = useOAuthPopup({
+    onAccounts: async (accs) => {
+      try {
+        await addAccounts(accs);
+        resetOauth();
+      } catch (err) {
+        alert("Erro ao salvar contas: " + err.message);
+        resetOauth();
+      }
+    },
+  });
 
   // Refs para evitar closures velhas nos callbacks
   const insightsRef   = useRef(insights);
@@ -368,7 +381,18 @@ export default function Accounts() {
           <button className="btn btn-ghost btn-sm" onClick={() => setShowPageIdModal(true)}>
             🔑 Adicionar via Page ID
           </button>
-          <a href={oauthUrl} className="btn btn-primary">+ Conta</a>
+          <button
+              onClick={openPopup}
+              disabled={oauthStatus === "waiting" || oauthStatus === "saving"}
+              className="btn btn-primary"
+              style={{ display: "flex", alignItems: "center", gap: 6 }}
+            >
+              {oauthStatus === "waiting"
+                ? <><span className="spinner" style={{ width: 12, height: 12 }} /> Aguardando...</>
+                : oauthStatus === "saving"
+                  ? <><span className="spinner" style={{ width: 12, height: 12 }} /> Salvando...</>
+                  : "📷 + Conta"}
+            </button>
         </div>
       </div>
 
@@ -414,6 +438,21 @@ export default function Accounts() {
       )}
 
       {/* ── Modais ─────────────────────────────────────────────────────────── */}
+      {oauthError && (
+        <div style={{
+          position: "fixed", bottom: 80, left: "50%", transform: "translateX(-50%)",
+          padding: "10px 18px", borderRadius: 10, zIndex: 9999,
+          background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)",
+          color: "var(--danger)", fontSize: 13, maxWidth: 420, textAlign: "center",
+          backdropFilter: "blur(8px)", boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+        }}>
+          ⚠️ {oauthError}
+          <button onClick={resetOauth} style={{ marginLeft: 10, background: "none", color: "inherit", fontSize: 12, textDecoration: "underline", padding: 0, cursor: "pointer" }}>
+            Fechar
+          </button>
+        </div>
+      )}
+
       {showPageIdModal && <AddViaPageModal onClose={() => setShowPageIdModal(false)} onAdded={handleAddViaPage} />}
 
       {detailAcc && (
@@ -445,7 +484,18 @@ export default function Accounts() {
           <div className="empty-title">Nenhuma conta conectada</div>
           <div style={{ fontSize: 13, marginBottom: 20, color: "var(--muted)" }}>Conecte contas Instagram Business ou Creator.</div>
           <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
-            <a href={oauthUrl} className="btn btn-primary">+ Conectar via OAuth</a>
+            <button
+                onClick={openPopup}
+                disabled={oauthStatus === "waiting" || oauthStatus === "saving"}
+                className="btn btn-primary"
+                style={{ display: "flex", alignItems: "center", gap: 6 }}
+              >
+                {oauthStatus === "waiting"
+                  ? <><span className="spinner" style={{ width: 12, height: 12 }} /> Aguardando login...</>
+                  : oauthStatus === "saving"
+                    ? <><span className="spinner" style={{ width: 12, height: 12 }} /> Salvando...</>
+                    : "📷 Conectar Instagram"}
+              </button>
             <button className="btn btn-ghost" onClick={() => setShowPageIdModal(true)}>🔑 Adicionar via Page ID</button>
           </div>
         </div>
