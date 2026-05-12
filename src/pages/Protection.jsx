@@ -1,7 +1,9 @@
-// Protection.jsx — Proteção de Contas (v2: configuração em IndexedDB)
-import { useState, useEffect } from "react";
+// Protection.jsx — Proteção de Contas + Health Check diário
+import { useState, useEffect, useCallback } from "react";
 import { useAccounts } from "../useAccounts.js";
 import { dbGet, dbPut } from "../useDB.js";
+import { useHealthCheck } from "../hooks/useHealthCheck.js";
+import HealthCheckPanel from "../components/HealthCheckPanel.jsx";
 
 const DEFAULTS = { maxPerDay: 50, maxPerHour: 4, minGapMin: 10, windowStart: 7, windowEnd: 23 };
 const DB_KEY = "protection_config";
@@ -52,12 +54,38 @@ function Slider({ label, hint, val, min, max, unit, onChange }) {
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--muted)", marginTop: 1 }}>
         <span>{min}</span><span>{max}</span>
       </div>
+      </div>
+      )}
     </div>
   );
 }
 
 // ── Componente principal ──────────────────────────────────────────────────────
 export default function Protection() {
+  const { accounts, reloadAccounts } = useAccounts();
+
+  // Pausa automática — marca conta como pausada no IndexedDB local
+  const handleAutoPause = useCallback(async (igId, reason) => {
+    try {
+      await dbPut("protection", {
+        id: `paused_${igId}`,
+        igId, reason,
+        paused_at: new Date().toISOString(),
+        auto: true,
+      });
+      console.info(`[HealthCheck] Conta ${igId} pausada: ${reason}`);
+    } catch (err) {
+      console.error("[HealthCheck] Falha ao pausar:", err);
+    }
+  }, []);
+
+  const { result, loading: hcLoading, lastRun, stats, runCheck, getAccountResult } = useHealthCheck(
+    accounts,
+    { onAutoPause: handleAutoPause }
+  );
+
+  const [activeTab, setActiveTab] = useState("health");
+
   const { accounts } = useAccounts();
   const [cfg, setCfg]       = useState({ global: { ...DEFAULTS }, perAccount: {} });
   const [loading, setLoading] = useState(true);
