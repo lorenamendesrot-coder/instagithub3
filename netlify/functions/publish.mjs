@@ -1,37 +1,7 @@
 // publish.mjs
-import { getStore } from "@netlify/blobs";
-
 const GRAPH          = "https://graph.facebook.com/v21.0";
 const sleep          = (ms) => new Promise((r) => setTimeout(r, ms));
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || process.env.URL || "";
-
-// Variação leve — adiciona parâmetro único por conta na URL
-// O Instagram trata URLs diferentes como mídias diferentes (hash diferente)
-function getVariedMediaUrl(originalUrl, accountId) {
-  try {
-    const url = new URL(originalUrl);
-    url.searchParams.set("_v", accountId.toString().slice(-8));
-    return url.toString();
-  } catch {
-    return originalUrl;
-  }
-}
-
-// ─── Busca token fresco do Blobs (fallback quando o body não traz token) ───────
-async function getFreshToken(accountId) {
-  try {
-    const store = getStore({
-      name: "insta-accounts",
-      siteID: process.env.NETLIFY_SITE_ID,
-      token:  process.env.NETLIFY_TOKEN,
-      consistency: "strong",
-    });
-    const acc = await store.get(`account-${accountId}`, { type: "json" });
-    return acc?.access_token || null;
-  } catch {
-    return null;
-  }
-}
 
 // ─── Rate limit em memória ────────────────────────────────────────────────────
 const warmupState = new Map();
@@ -99,8 +69,8 @@ function recordPost(id, ok) {
 
 // ─── Polling do container de vídeo ───────────────────────────────────────────
 async function waitForContainer(id, token) {
-  for (let i = 0; i < 4; i++) {
-    await sleep(5000);
+  for (let i = 0; i < 5; i++) {
+    await sleep(4000);
     try {
       const r = await fetch(`${GRAPH}/${id}?fields=status_code&access_token=${token}`);
       const d = await r.json();
@@ -113,31 +83,23 @@ async function waitForContainer(id, token) {
 
 // ─── Publicação por conta ─────────────────────────────────────────────────────
 async function publishOne({ account, media_url, media_type, post_type, caption }) {
-  // Usa o token do body; se ausente (ex: token não salvo na queue), busca direto do Blobs
-  let token = account.access_token;
-  if (!token && account.id) {
-    token = await getFreshToken(account.id);
-  }
+  const token = account.access_token;
   if (!token) return { success: false, error: "Token não encontrado. Reconecte a conta." };
 
   const isVideo = media_type === "VIDEO";
-
-  // Variação leve da URL por conta (hash diferente sem re-upload)
-  const finalUrl = getVariedMediaUrl(media_url, account.id);
-
   let payload = { access_token: token };
 
   if (post_type === "REEL") {
     if (!isVideo) return { success: false, error: "Reels só aceita vídeo." };
-    payload = { ...payload, video_url: finalUrl, media_type: "REELS", caption, share_to_feed: true };
+    payload = { ...payload, video_url: media_url, media_type: "REELS", caption, share_to_feed: true };
   } else if (post_type === "FEED") {
     payload = isVideo
-      ? { ...payload, video_url: finalUrl, media_type: "REELS", caption }
-      : { ...payload, image_url: finalUrl, caption };
+      ? { ...payload, video_url: media_url, media_type: "REELS", caption }
+      : { ...payload, image_url: media_url, caption };
   } else if (post_type === "STORY") {
     payload = isVideo
-      ? { ...payload, video_url: finalUrl, media_type: "VIDEO" }
-      : { ...payload, image_url: finalUrl };
+      ? { ...payload, video_url: media_url, media_type: "VIDEO" }
+      : { ...payload, image_url: media_url };
   }
 
   try {

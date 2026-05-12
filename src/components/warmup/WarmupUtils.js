@@ -12,35 +12,38 @@ export const WARMUP_PRESET_2D = {
     {
       day: 1,
       label: "Dia 1 — Arranque Suave",
-      reels:   3,
-      feed:    1,
-      stories: 2,
+      reels:   10,
+      feed:    0,
+      stories: 0,
       windowStart: "09:00",
       windowEnd:   "21:30",
-      intervalMinMin: 90,
-      intervalMinMax: 150,
+      intervalMinMin: 60,
+      intervalMinMax: 75,
+      jitterMin: 8,
     },
     {
       day: 2,
       label: "Dia 2 — Aceleração",
-      reels:   5,
-      feed:    2,
-      stories: 3,
+      reels:   20,
+      feed:    0,
+      stories: 0,
       windowStart: "09:00",
       windowEnd:   "21:30",
       intervalMinMin: 60,
-      intervalMinMax: 120,
+      intervalMinMax: 75,
+      jitterMin: 8,
     },
     {
       day: 3,
       label: "Dia 3 — Manutenção de Nível",
-      reels:   4,
-      feed:    2,
-      stories: 3,
+      reels:   30,
+      feed:    0,
+      stories: 0,
       windowStart: "09:00",
       windowEnd:   "21:30",
-      intervalMinMin: 70,
-      intervalMinMax: 130,
+      intervalMinMin: 60,
+      intervalMinMax: 75,
+      jitterMin: 8,
     },
   ],
 };
@@ -77,34 +80,9 @@ export function isNewAccount(acc) {
   return warmupDay(acc.connected_at || new Date().toISOString()) <= NEW_ACCOUNT_DAYS;
 }
 
-// Upload via FilGarden (alternativa ao R2)
-export async function uploadFileGarden(file, onProgress) {
-  onProgress(5);
-  const base64 = await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload  = () => resolve(reader.result.split(",")[1]);
-    reader.onerror = () => reject(new Error("Erro ao ler arquivo"));
-    reader.readAsDataURL(file);
-  });
-  onProgress(30);
-  const res = await fetch("/api/filegarden-proxy", {
-    method:  "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ fileBase64: base64, fileName: file.name, mimeType: file.type || "video/mp4" }),
-  });
-  onProgress(90);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `FilGarden HTTP ${res.status}`);
-  }
-  const { url } = await res.json();
-  if (!url) throw new Error("FilGarden não retornou URL");
-  onProgress(100);
-  return url;
-}
-
 // Upload direto do browser para R2 via presigned URL — sem limite de tamanho
 export async function uploadFile(file, onProgress, onSanitized) {
+  onProgress(2);
 
   // Passo 1: obter presigned URL
   const presignRes = await fetch("/api/r2-presign", {
@@ -167,19 +145,8 @@ export function timeToMs(dateBase, timeStr) {
 }
 
 export function generateSlotTimes(dayBase, count, plan) {
-  let windowStart = timeToMs(dayBase, plan.windowStart);
-  let windowEnd   = timeToMs(dayBase, plan.windowEnd);
-  const now = Date.now();
-
-  // Se a janela inteira já passou, estende o windowEnd para now + espaço suficiente
-  // Isso permite gerar slots mesmo fora do horário (útil para testes)
-  if (windowEnd < now) {
-    windowStart = now + 60000;
-    windowEnd   = now + (count * 10 * 60 * 1000) + 60000; // count × 10min + margem
-  } else if (windowStart < now) {
-    // Janela já começou — parte do momento atual
-    windowStart = now + 60000;
-  }
+  const windowStart = timeToMs(dayBase, plan.windowStart);
+  const windowEnd   = timeToMs(dayBase, plan.windowEnd);
 
   // Intervalo base aleatório entre min e max (distribui os posts na janela)
   const intervalMin = plan.intervalMinMin * 60 * 1000;

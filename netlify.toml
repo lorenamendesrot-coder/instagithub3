@@ -26,21 +26,3 @@
 
 [functions."catbox-proxy"]
   timeout = 26
-
-[functions."publish"]
-  timeout = 26
-
-[functions."sanitize-media"]
-  timeout = 26
-
-[functions."publish-finish"]
-  timeout = 26
-
-[functions."filegarden-proxy"]
-  timeout = 26
-
-[functions.health-check]
-  schedule = "0 7 * * *"
-
-[functions."add-account-via-token"]
-  timeout = 20

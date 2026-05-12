@@ -152,6 +152,152 @@ export function AddViaPageModal({ onClose, onAdded }) {
   );
 }
 
+
+// ── Modal: Adicionar via Access Token direto ──────────────────────────────────
+export function AddViaTokenModal({ onClose, onAdded }) {
+  const [token,    setToken]    = useState("");
+  const [nickname, setNickname] = useState("");
+  const [loading,  setLoading]  = useState(false);
+  const [error,    setError]    = useState(null);
+  const [preview,  setPreview]  = useState(null);
+  const [warning,  setWarning]  = useState(null);
+
+  const validate = async () => {
+    setError(null); setPreview(null); setWarning(null);
+    if (!token.trim()) { setError("Cole o Access Token gerado no Meta Developers."); return; }
+    setLoading(true);
+    try {
+      const res  = await fetch("/api/add-account-via-token", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ access_token: token.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) setError(data.error || "Erro ao validar token.");
+      else { setPreview(data.account); setWarning(data.warning || null); }
+    } catch (e) { setError("Erro de rede: " + e.message); }
+    setLoading(false);
+  };
+
+  const confirm = async () => {
+    if (!preview) return;
+    await onAdded({ ...preview, nickname: nickname.trim() || undefined });
+    onClose();
+  };
+
+  return (
+    <div onClick={(e) => e.target === e.currentTarget && onClose()} style={{
+      position: "fixed", inset: 0, zIndex: 2500,
+      background: "rgba(0,0,0,0.75)", backdropFilter: "blur(5px)",
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
+    }}>
+      <div style={{ background: "var(--bg2)", border: "1px solid var(--border2)", borderRadius: 18, width: "100%", maxWidth: 480, boxShadow: "0 24px 64px rgba(0,0,0,0.7)", overflow: "hidden" }}>
+        {/* Header */}
+        <div style={{ padding: "18px 20px 16px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 16 }}>🔐 Adicionar via Access Token</div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>Token gerado no Meta Developers</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", color: "var(--muted)", fontSize: 22, padding: "0 4px", lineHeight: 1 }}>×</button>
+        </div>
+
+        <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
+          {/* Instruções */}
+          <div style={{ padding: "12px 14px", background: "rgba(124,92,252,0.08)", borderRadius: 10, border: "1px solid rgba(124,92,252,0.2)", fontSize: 12, color: "var(--muted)", lineHeight: 1.8 }}>
+            <div style={{ fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>📋 Como gerar o token:</div>
+            <ol style={{ margin: 0, paddingLeft: 18 }}>
+              <li>Acesse <a href="https://developers.facebook.com/apps" target="_blank" rel="noreferrer" style={{ color: "var(--accent-light)" }}>Meta Developers</a> → seu App</li>
+              <li>Menu esquerdo: <strong style={{ color: "var(--text)" }}>Instagram → API setup with Instagram Login</strong></li>
+              <li>Clique em <strong style={{ color: "var(--text)" }}>Generate token</strong> ao lado da conta</li>
+              <li>Faça login, confirme permissões e copie o token</li>
+            </ol>
+          </div>
+
+          {/* Token input */}
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, display: "block", marginBottom: 6 }}>
+              Access Token <span style={{ color: "var(--danger)" }}>*</span>
+            </label>
+            <textarea
+              value={token}
+              onChange={(e) => { setToken(e.target.value); setPreview(null); setError(null); setWarning(null); }}
+              placeholder="Cole o token aqui (começa com EAA... ou IG...)"
+              style={{ width: "100%", minHeight: 80, fontFamily: "monospace", fontSize: 11, resize: "vertical", boxSizing: "border-box" }}
+              disabled={loading}
+            />
+          </div>
+
+          {/* Apelido */}
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, display: "block", marginBottom: 6 }}>
+              Apelido <span style={{ color: "var(--muted)", fontWeight: 400 }}>(opcional)</span>
+            </label>
+            <input
+              type="text" value={nickname}
+              onChange={(e) => setNickname(e.target.value)}
+              placeholder="Ex: Conta Principal..."
+              maxLength={50} style={{ width: "100%", boxSizing: "border-box" }}
+              disabled={loading}
+            />
+          </div>
+
+          {/* Erro */}
+          {error && (
+            <div style={{ padding: "10px 14px", borderRadius: 8, fontSize: 13, background: "rgba(239,68,68,0.08)", color: "var(--danger)", border: "1px solid rgba(239,68,68,0.2)" }}>
+              ✕ {error}
+            </div>
+          )}
+
+          {/* Warning (short-lived token) */}
+          {warning && (
+            <div style={{ padding: "10px 14px", borderRadius: 8, fontSize: 12, background: "rgba(245,158,11,0.08)", color: "var(--warning)", border: "1px solid rgba(245,158,11,0.25)" }}>
+              ⚠️ {warning}
+            </div>
+          )}
+
+          {/* Preview da conta */}
+          {preview && (
+            <div style={{ padding: 14, borderRadius: 10, background: "rgba(34,197,94,0.07)", border: "1px solid rgba(34,197,94,0.25)" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "var(--success)", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>✓ Conta encontrada</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                {preview.profile_picture
+                  ? <img src={preview.profile_picture} alt="" style={{ width: 44, height: 44, borderRadius: "50%", objectFit: "cover", border: "2px solid var(--border2)", flexShrink: 0 }} />
+                  : <div style={{ width: 44, height: 44, borderRadius: "50%", background: "linear-gradient(135deg,#7c5cfc,#e040fb)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 18, color: "#fff", flexShrink: 0 }}>{(preview.username || "?")[0].toUpperCase()}</div>}
+                <div>
+                  <div style={{ fontWeight: 700 }}>{preview.name || preview.username}</div>
+                  <div style={{ fontSize: 12, color: "var(--muted)" }}>@{preview.username}</div>
+                  <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+                    <span className="badge badge-purple" style={{ fontSize: 10 }}>{preview.account_type}</span>
+                    <span className="badge badge-success" style={{ fontSize: 10 }}>
+                      {preview.token_duration === "long-lived" ? "✓ Token 60 dias" : "⚠ Token curto"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Botões */}
+          <div style={{ display: "flex", gap: 10 }}>
+            {!preview ? (
+              <>
+                <button className="btn btn-primary" style={{ flex: 1 }} onClick={validate} disabled={loading || !token.trim()}>
+                  {loading ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Validando...</> : "Validar token"}
+                </button>
+                <button className="btn btn-ghost" onClick={onClose} disabled={loading}>Cancelar</button>
+              </>
+            ) : (
+              <>
+                <button className="btn btn-primary" style={{ flex: 1 }} onClick={confirm}>✓ Confirmar e adicionar</button>
+                <button className="btn btn-ghost" onClick={() => { setPreview(null); setWarning(null); }}>Corrigir</button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Modal de edição de perfil ─────────────────────────────────────────────────
 export function EditProfileModal({ acc, onClose, onSaved }) {
   const [tab, setTab]           = useState("bio");

@@ -47,70 +47,62 @@ async function runItem(item) {
       const mediaUrl = urlsToPost[mi];
       if (mi > 0) await sleep(3000);
 
+      const res = await fetch(apiUrl, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accounts:        item.accounts,
+          media_url:       mediaUrl,
+          media_type:      item.mediaType,
+          post_type:       item.postType,
+          captions:        item.captions || {},
+          default_caption: item.caption  || "",
+          delay_seconds:   0,
+        }),
+      });
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+      const data = await res.json();
+      let results = data.results || [];
+
+      // Separar contas com pending (vídeo ainda processando no Instagram)
+      const pendingResults  = results.filter((r) => r.pending && r.creation_id);
+      const finishedResults = results.filter((r) => !r.pending);
+
+      // ID fixo para o item do histórico — calculado UMA vez antes de qualquer await
       const historyId = `h-${Date.now()}-${mi}`;
-      const allResults = [];
-      const pendingAccounts = [];
 
-      // ── Publica UMA conta por request para não estourar rate limit da Meta ──
-      for (let ai = 0; ai < item.accounts.length; ai++) {
-        if (ai > 0) await sleep(3000); // 3s entre cada conta
-        const account = item.accounts[ai];
-
-        let res, data;
-        try {
-          res  = await fetch(apiUrl, {
-            method:  "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              accounts:        [account],  // ← 1 conta por vez
-              media_url:       mediaUrl,
-              media_type:      item.mediaType,
-              post_type:       item.postType,
-              captions:        item.captions || {},
-              default_caption: item.caption  || "",
-              delay_seconds:   0,
-              skip_rate_limit: !!item.warmup,
-            }),
-          });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          data = await res.json();
-        } catch (fetchErr) {
-          allResults.push({ account_id: account.id, username: account.username, success: false, error: fetchErr.message });
-          continue;
-        }
-
-        const result = (data.results || [])[0] || { account_id: account.id, username: account.username, success: false, error: "Sem resposta" };
-
-        if (result.pending && result.creation_id) {
-          // Vídeo ainda processando — cria video_finish
-          const vfId = `vf-${historyId}-${account.id}`;
-          await saveItem("queue", {
-            id:          vfId,
-            type:        "video_finish",
-            status:      "pending",
-            creation_id: result.creation_id,
-            account_id:  account.id,
-            username:    account.username || account.id,
-            accounts:    [account],
-            scheduledAt: Date.now() + 30000,
-            historyId,
-            mediaUrl,
-            postType:    item.postType,
-            mediaType:   item.mediaType,
-            caption:     item.caption || "",
-            createdAt:   new Date().toISOString(),
-            attempts:    0,
-            maxAttempts: 20,
-          });
-          console.log(`[SW] video_finish criado → @${account.username} historyId:${historyId}`);
-          pendingAccounts.push({ account_id: account.id, username: account.username || account.id });
-        } else {
-          allResults.push(result);
-          if (result.success) totalSuccesses++;
-        }
+      // Salva video_finish para cada conta com pending
+      for (const pr of pendingResults) {
+        const vfId = `vf-${historyId}-${pr.account_id}`;
+        await saveItem("queue", {
+          id:          vfId,
+          type:        "video_finish",
+          status:      "pending",
+          creation_id: pr.creation_id,
+          account_id:  pr.account_id,
+          username:    pr.username || pr.account_id,
+          accounts:    item.accounts,
+          // Tenta pela primeira vez 60s depois — dá tempo ao Instagram processar
+          scheduledAt: Date.now() + 60000,
+          historyId,             // ← aponta para o item do histórico para atualizar
+          mediaUrl,
+          postType:    item.postType,
+          mediaType:   item.mediaType,
+          caption:     item.caption || "",
+          createdAt:   new Date().toISOString(),
+          attempts:    0,
+          maxAttempts: 8,        // 8 × 20s ≈ 2.5 min de janela total
+        });
+        console.log(`[SW] video_finish criado → @${pr.username} historyId:${historyId}`);
       }
 
-      totalResults = totalResults.concat(allResults);
+      // Salva no histórico com os resultados já finalizados + lista de pendentes
+      // O campo pending_accounts serve para o History.jsx mostrar "⏳ Processando"
+      const pendingAccounts = pendingResults.map((r) => ({
+        account_id: r.account_id,
+        username:   r.username || r.account_id,
+      }));
 
       await saveItem("history", {
         id:               historyId,
@@ -118,14 +110,16 @@ async function runItem(item) {
         media_url:        mediaUrl,
         media_type:       item.mediaType,
         default_caption:  item.caption || "",
-        results:          allResults,
-        pending_accounts: pendingAccounts,
+        results:          finishedResults,
+        pending_accounts: pendingAccounts,   // contas ainda processando
         created_at:       new Date().toISOString(),
         from_scheduler:   true,
-        source:           item.warmup ? "warmup" : "schedule",
         cycle_index:      mi,
         cycle_total:      urlsToPost.length,
       });
+
+      totalResults   = [...totalResults, ...finishedResults];
+      totalSuccesses += finishedResults.filter((r) => r.success).length;
     }
 
     if (item.loop) {
@@ -262,7 +256,7 @@ async function runVideoFinish(item) {
         notifyClients({ type: "QUEUE_UPDATE" });
       } else {
         // Ainda há tentativas — reagenda para 30s depois
-        await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + 20000 });
+        await updateItem(item.id, { status: "pending", attempts, scheduledAt: Date.now() + 30000 });
       }
     }
 

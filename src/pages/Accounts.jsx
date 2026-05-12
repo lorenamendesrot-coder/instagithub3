@@ -7,7 +7,7 @@ import AccountAvatar from "../components/accounts/AccountAvatar.jsx";
 import StatBox from "../components/accounts/AccountStatBox.jsx";
 import HealthBadge from "../components/accounts/AccountHealthBadge.jsx";
 import HealthOverview from "../components/accounts/AccountHealthOverview.jsx";
-import { RenameModal, AddViaPageModal, EditProfileModal } from "../components/accounts/AccountModals.jsx";
+import { RenameModal, AddViaPageModal, EditProfileModal, AddViaTokenModal } from "../components/accounts/AccountModals.jsx";
 import { fmt, healthMeta } from "../components/accounts/AccountUtils.js";
 
 // ── Modal de detalhes da conta ────────────────────────────────────────────────
@@ -211,7 +211,8 @@ export default function Accounts() {
   const [detailAcc,       setDetailAcc]       = useState(null);
   const [insights,        setInsights]        = useState({});
   const [loadingIns,      setLoadingIns]      = useState({});
-  const [showPageIdModal, setShowPageIdModal] = useState(false);
+  const [showPageIdModal,  setShowPageIdModal]  = useState(false);
+  const [showTokenModal,   setShowTokenModal]   = useState(false);
   const [renamingAcc,     setRenamingAcc]     = useState(null);
   const [refreshingAll,   setRefreshingAll]   = useState(false);
   const [refreshProgress, setRefreshProgress] = useState({ done: 0, total: 0 });
@@ -350,6 +351,12 @@ export default function Accounts() {
     setEditingAcc(null);
   };
 
+  const handleAddViaToken = async (account) => {
+    await saveAccount(account);
+    toast.success(`@${account.username} adicionada com sucesso!`);
+    await loadAccounts();
+  };
+
   const handleAddViaPage = async (account) => {
     await addAccounts([account]);
     setTimeout(() => fetchInsights(account, true), 600);
@@ -453,6 +460,7 @@ export default function Accounts() {
         </div>
       )}
 
+      {showTokenModal  && <AddViaTokenModal onClose={() => setShowTokenModal(false)}  onAdded={handleAddViaToken} />}
       {showPageIdModal && <AddViaPageModal onClose={() => setShowPageIdModal(false)} onAdded={handleAddViaPage} />}
 
       {detailAcc && (
@@ -496,6 +504,7 @@ export default function Accounts() {
                     ? <><span className="spinner" style={{ width: 12, height: 12 }} /> Salvando...</>
                     : "📷 Conectar Instagram"}
               </button>
+            <button className="btn btn-ghost" onClick={() => setShowTokenModal(true)}>🔐 Adicionar via Token</button>
             <button className="btn btn-ghost" onClick={() => setShowPageIdModal(true)}>🔑 Adicionar via Page ID</button>
           </div>
         </div>
