@@ -4,6 +4,9 @@
 import { getStore } from "@netlify/blobs";
 
 const GRAPH      = "https://graph.facebook.com/v21.0";
+const GRAPH_IG   = "https://graph.instagram.com";
+
+function isIGToken(token) { return token?.startsWith('IGAA'); }
 const STORE_NAME = "insta-accounts";
 
 const HEADERS = {
@@ -25,6 +28,14 @@ async function debugToken(token) {
   const APP_ID     = process.env.META_APP_ID;
   const APP_SECRET = process.env.META_APP_SECRET;
   try {
+    // Tokens do Instagram Login (IGAA) são validados pelo graph.instagram.com
+    if (isIGToken(token)) {
+      const res  = await fetch(`${GRAPH_IG}/me?fields=id&access_token=${token}`);
+      const data = await res.json();
+      if (data.error) return { is_valid: false, error_code: data.error.code, error_message: data.error.message };
+      return { is_valid: true, type: "INSTAGRAM", expires_at: 0, scopes: [] };
+    }
+    // Tokens do Facebook Login usam debug_token
     const res  = await fetch(
       `${GRAPH}/debug_token?input_token=${token}&access_token=${APP_ID}|${APP_SECRET}`
     );
@@ -39,6 +50,15 @@ async function tryRefresh(token) {
   const APP_ID     = process.env.META_APP_ID;
   const APP_SECRET = process.env.META_APP_SECRET;
   try {
+    // Tokens do Instagram Login renovam via graph.instagram.com
+    if (isIGToken(token)) {
+      const res  = await fetch(
+        `${GRAPH_IG}/refresh_access_token?grant_type=ig_refresh_token&access_token=${token}`
+      );
+      const data = await res.json();
+      return data;
+    }
+    // Tokens do Facebook Login
     const res  = await fetch(
       `${GRAPH}/oauth/access_token?grant_type=fb_exchange_token&client_id=${APP_ID}&client_secret=${APP_SECRET}&fb_exchange_token=${token}`
     );

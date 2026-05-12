@@ -7,7 +7,15 @@
 // - analyzeAccountHealth() consolida tudo em score/overall/issues
 // - Falhas em insights individuais não derrubam a resposta (degradação graceful)
 
-const GRAPH = "https://graph.facebook.com/v21.0";
+const GRAPH_FB = "https://graph.facebook.com/v21.0";
+const GRAPH_IG = "https://graph.instagram.com";
+
+// Tokens do Instagram Login começam com 'IGAA'
+// Tokens do Facebook Login começam com 'EAA'
+function isIGToken(token) { return token?.startsWith('IGAA'); }
+function graphBase(token) { return isIGToken(token) ? GRAPH_IG : GRAPH_FB + '/'; }
+// Para chamadas que precisam de versão explícita no FB Graph
+const GRAPH = GRAPH_FB;
 
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || process.env.URL || "";
 
@@ -43,7 +51,7 @@ function sumInsightValues(insightObj) {
 async function fetchInsightsWindow(igId, token, sinceUnix, untilUnix) {
   const metrics = ["reach", "profile_views", "website_clicks", "follower_count"];
   const url =
-    `${GRAPH}/${igId}/insights` +
+    `${graphBase(token)}${igId}/insights` +
     `?metric=${metrics.join(",")}` +
     `&period=day` +
     `&since=${sinceUnix}&until=${untilUnix}` +
@@ -54,7 +62,7 @@ async function fetchInsightsWindow(igId, token, sinceUnix, untilUnix) {
   // Se a chamada inteira falhou, tentamos uma chamada conservadora só com `reach`
   if (data.error || !data.data) {
     const fallback = await gfetch(
-      `${GRAPH}/${igId}/insights?metric=reach&period=day&since=${sinceUnix}&until=${untilUnix}&access_token=${token}`
+      `${graphBase(token)}${igId}/insights?metric=reach&period=day&since=${sinceUnix}&until=${untilUnix}&access_token=${token}`
     );
     if (fallback.error || !fallback.data) {
       return { available: false, error: fallback.error?.message || data.error?.message };
@@ -232,9 +240,10 @@ export const handler = async (event) => {
       "followers_count", "follows_count", "media_count",
     ].join(",");
 
-    const profileData = await gfetch(
-      `${GRAPH}/${instagram_id}?fields=${profileFields}&access_token=${access_token}`
-    );
+    const graphUrl = isIGToken(access_token)
+      ? `${GRAPH_IG}/me?fields=${profileFields}&access_token=${access_token}`
+      : `${GRAPH_FB}/${instagram_id}?fields=${profileFields}&access_token=${access_token}`;
+    const profileData = await gfetch(graphUrl);
 
     if (profileData.error) {
       if (profileData.error.code === 190) {
@@ -260,7 +269,7 @@ export const handler = async (event) => {
     const fourteenDaysAgo = unixDaysAgo(14);
 
     const [limitData, insights7d, insightsPrev7d] = await Promise.all([
-      gfetch(`${GRAPH}/${instagram_id}/content_publishing_limit?fields=config,quota_usage&access_token=${access_token}`),
+      gfetch(`${graphBase(access_token)}${instagram_id}/content_publishing_limit?fields=config,quota_usage&access_token=${access_token}`),
       fetchInsightsWindow(instagram_id, access_token, sevenDaysAgo, now),
       fetchInsightsWindow(instagram_id, access_token, fourteenDaysAgo, sevenDaysAgo),
     ]);
