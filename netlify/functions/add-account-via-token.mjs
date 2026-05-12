@@ -29,17 +29,18 @@ export const handler = async (event) => {
   const token = access_token.trim();
 
   try {
-    // ── 1. Validar o token via debug_token ────────────────────────────────────
-    const debugRes  = await fetch(`${GRAPH_FB}/debug_token?input_token=${token}&access_token=${APP_ID}|${APP_SECRET}`);
-    const debugData = await debugRes.json();
+    // ── 1. Validar o token via debug_token (opcional — falhas não bloqueiam) ──
+    try {
+      const debugRes  = await fetch(`${GRAPH_FB}/debug_token?input_token=${token}&access_token=${APP_ID}|${APP_SECRET}`);
+      const debugData = await debugRes.json();
 
-    if (debugData.error)
-      return { statusCode: 401, headers, body: JSON.stringify({ error: "Token inválido: " + debugData.error.message }) };
-
-    const info = debugData.data || {};
-    if (!info.is_valid) {
-      const reason = info.error?.message || "Token expirado ou revogado";
-      return { statusCode: 401, headers, body: JSON.stringify({ error: "Token inválido: " + reason }) };
+      if (debugData.data && !debugData.data.is_valid) {
+        const reason = debugData.data.error?.message || "Token expirado ou revogado";
+        return { statusCode: 401, headers, body: JSON.stringify({ error: "Token inválido: " + reason }) };
+      }
+      // Se debug_token retornar erro de serviço (#2), ignora e continua
+    } catch {
+      // Ignora falha no debug_token e tenta validar via /me diretamente
     }
 
     // ── 2. Buscar dados básicos da conta Instagram ────────────────────────────
