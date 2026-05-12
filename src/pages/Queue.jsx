@@ -57,8 +57,10 @@ export default function Queue() {
   const [editTime,     setEditTime]     = useState("");
   const [editCaption,  setEditCaption]  = useState("");
   const [confirmModal, setConfirmModal] = useState(null);
-  const [filterStatus, setFilterStatus] = useState("all");   // status filter
-  const [filterDay,    setFilterDay]    = useState("all");   // "all" | startMs como string
+  const [filterStatus, setFilterStatus] = useState("all");
+  const [filterDay,    setFilterDay]    = useState("all");
+  const [selected,     setSelected]     = useState(new Set()); // IDs selecionados
+  const [selecting,    setSelecting]    = useState(false);     // modo seleção ativo
 
   // Separar itens normais dos video_finish (tarefas internas do SW)
   const mainQueue   = useMemo(() => queue.filter((q) => !q.type), [queue]);
@@ -107,6 +109,24 @@ export default function Queue() {
     // Ordenar por scheduledAt
     return [...items].sort((a, b) => a.scheduledAt - b.scheduledAt);
   }, [mainQueue, filterStatus, filterDay]);
+
+  // ─── Funções de seleção múltipla ──────────────────────────────────────────
+  const toggleSelect = (id) => setSelected((prev) => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+
+  const selectAll  = () => setSelected(new Set(filtered.map((i) => i.id)));
+  const selectNone = () => setSelected(new Set());
+
+  const removeSelected = async () => {
+    const ids = [...selected];
+    for (const id of ids) await removeItem(id);
+    setSelected(new Set());
+    setSelecting(false);
+    setConfirmModal(null);
+  };
 
   // Auto-reload enquanto há video_finish pendentes
   const hasPendingVF = videoFinish.some((v) => v.status === "pending" || v.status === "running");
@@ -158,6 +178,14 @@ export default function Queue() {
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button className="btn btn-ghost btn-sm" onClick={() => reloadQueue?.()}>↻ Atualizar</button>
+          {filtered.length > 0 && (
+            <button
+              className={`btn btn-sm ${selecting ? "btn-primary" : "btn-ghost"}`}
+              onClick={() => { setSelecting((p) => !p); setSelected(new Set()); }}
+            >
+              {selecting ? "✕ Cancelar" : "☑ Selecionar"}
+            </button>
+          )}
           {queue.length > 0 && (
             <button className="btn btn-danger btn-sm" onClick={() => setConfirmModal({ type: "clearQueue" })}>
               🗑 Limpar tudo
@@ -165,6 +193,34 @@ export default function Queue() {
           )}
         </div>
       </div>
+
+      {/* Barra de seleção em massa */}
+      {selecting && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+          padding: "10px 14px", borderRadius: 10, marginBottom: 14,
+          background: "rgba(124,92,252,0.08)", border: "1px solid rgba(124,92,252,0.25)",
+        }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--accent-light)" }}>
+            {selected.size} selecionado(s)
+          </span>
+          <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={selectAll}>
+            ✓ Todos ({filtered.length})
+          </button>
+          <button className="btn btn-ghost btn-sm" style={{ fontSize: 11 }} onClick={selectNone}>
+            ✕ Nenhum
+          </button>
+          {selected.size > 0 && (
+            <button
+              className="btn btn-danger btn-sm"
+              style={{ fontSize: 12, marginLeft: "auto" }}
+              onClick={() => setConfirmModal({ type: "removeSelected" })}
+            >
+              🗑 Remover {selected.size} selecionado(s)
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Stats */}
       {mainQueue.length > 0 && (
@@ -269,6 +325,9 @@ export default function Queue() {
           vfByParent={vfByParent}
           onEdit={openEdit}
           onRemove={(id) => setConfirmModal({ type: "removeItem", id })}
+          selecting={selecting}
+          selected={selected}
+          onToggleSelect={toggleSelect}
         />
       )}
 
@@ -297,12 +356,14 @@ export default function Queue() {
         onConfirm={() => { clearQueue(); setConfirmModal(null); }} onCancel={() => setConfirmModal(null)} />
       <Modal open={confirmModal?.type === "removeItem"} title="Remover agendamento?" message="Este item será removido da fila." confirmLabel="Remover" confirmDanger
         onConfirm={() => { removeItem(confirmModal.id); setConfirmModal(null); }} onCancel={() => setConfirmModal(null)} />
+      <Modal open={confirmModal?.type === "removeSelected"} title={`Remover ${selected.size} item(s)?`} message={`${selected.size} agendamento(s) selecionado(s) serão removidos permanentemente.`} confirmLabel={`Remover ${selected.size}`} confirmDanger
+        onConfirm={removeSelected} onCancel={() => setConfirmModal(null)} />
     </div>
   );
 }
 
 // ─── QueueList — lista com separadores de dia ────────────────────────────────
-function QueueList({ items, filterDay, vfByParent, onEdit, onRemove }) {
+function QueueList({ items, filterDay, vfByParent, onEdit, onRemove, selecting, selected, onToggleSelect }) {
   // Quando "Todos os dias" está ativo, agrupa por dia com separador
   const groups = useMemo(() => {
     if (filterDay !== "all") return [{ label: null, items }];
@@ -348,6 +409,9 @@ function QueueList({ items, filterDay, vfByParent, onEdit, onRemove }) {
               vfItems={vfByParent[item.id]}
               onEdit={onEdit}
               onRemove={onRemove}
+              selecting={selecting}
+              isSelected={selected?.has(item.id)}
+              onToggleSelect={onToggleSelect}
             />
           ))}
         </div>
@@ -357,7 +421,7 @@ function QueueList({ items, filterDay, vfByParent, onEdit, onRemove }) {
 }
 
 // ─── QueueItem — card individual ─────────────────────────────────────────────
-function QueueItem({ item, vfItems, onEdit, onRemove }) {
+function QueueItem({ item, vfItems, onEdit, onRemove, selecting, isSelected, onToggleSelect }) {
   const info          = STATUS_INFO[item.status] || STATUS_INFO.pending;
   const scheduledDate = new Date(item.scheduledAt);
   const isPast        = item.scheduledAt < Date.now();
@@ -366,13 +430,30 @@ function QueueItem({ item, vfItems, onEdit, onRemove }) {
   const qty           = item.quantityPerCycle || 1;
 
   return (
-    <div style={{
-      background: info.bg,
-      border: `1px solid ${info.color}28`,
-      borderLeft: `3px solid ${info.color}`,
-      borderRadius: 10, padding: "10px 12px",
-    }}>
+    <div
+      style={{
+        background: isSelected ? "rgba(124,92,252,0.1)" : info.bg,
+        border: `1px solid ${isSelected ? "var(--accent)" : info.color + "28"}`,
+        borderLeft: `3px solid ${isSelected ? "var(--accent)" : info.color}`,
+        borderRadius: 10, padding: "10px 12px",
+        cursor: selecting ? "pointer" : "default",
+        transition: "all 0.12s",
+      }}
+      onClick={selecting ? () => onToggleSelect(item.id) : undefined}
+    >
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        {/* Checkbox no modo seleção */}
+        {selecting && (
+          <div style={{
+            width: 20, height: 20, borderRadius: 5, flexShrink: 0,
+            border: `2px solid ${isSelected ? "var(--accent)" : "var(--border2)"}`,
+            background: isSelected ? "var(--accent)" : "transparent",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            transition: "all 0.12s",
+          }}>
+            {isSelected && <span style={{ color: "#fff", fontSize: 12, fontWeight: 900 }}>✓</span>}
+          </div>
+        )}
         {/* Thumbnail */}
         {thumbUrl ? (
           <img src={thumbUrl} alt="" style={{ width: 40, height: 40, borderRadius: 7, objectFit: "cover", flexShrink: 0, border: "1px solid var(--border)" }}
