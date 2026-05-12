@@ -2,13 +2,13 @@
 import { NavLink } from "react-router-dom";
 
 const NAV = [
-  { to: "/",           label: "Contas",       icon: "👤", desc: "Gerencie suas contas" },
-  { to: "/fila",      label: "Fila",         icon: "🗂️", desc: "Agendamentos ativos"   },
-  { to: "/historico",  label: "Histórico",    icon: "📊", desc: "Posts publicados"     },
-  { to: "/aquecimento",label: "Aquecimento",  icon: "🔥", desc: "Aquecer contas"       },
-  { to: "/protecao",   label: "Proteção",     icon: "🛡️", desc: "Segurança da conta"   },
-  { to: "/logs",        label: "Logs",          icon: "📋", desc: "Checklist e atividade" },
-  { to: "/insights",    label: "Insights",      icon: "📊", desc: "Engajamento dos Reels"  },
+  { to: "/",            label: "Contas",      icon: "👤", desc: "Gerencie suas contas"   },
+  { to: "/aquecimento", label: "Aquecimento", icon: "🔥", desc: "Aquecer contas"         },
+  { to: "/fila",        label: "Fila",        icon: "🗂️", desc: "Agendamentos ativos"    },
+  { to: "/historico",   label: "Histórico",   icon: "📊", desc: "Posts publicados"       },
+  { to: "/protecao",    label: "Proteção",    icon: "🛡️", desc: "Segurança da conta"     },
+  { to: "/insights",    label: "Insights",    icon: "📊", desc: "Engajamento dos Reels"  },
+  { to: "/logs",        label: "Logs",        icon: "📋", desc: "Checklist e atividade"  },
 ];
 
 export default function Sidebar({ accounts, swStatus, oauthUrl, syncing }) {

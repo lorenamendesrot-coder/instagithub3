@@ -4,10 +4,11 @@ import { NavLink } from "react-router-dom";
 // Apenas os itens mais usados ficam na barra inferior
 // Os demais ficam em "Mais"
 const PRIMARY_NAV = [
-  { to: "/",          label: "Contas",   icon: "👤" },
-  { to: "/fila",      label: "Fila",     icon: "🗂️" },
-  { to: "/historico", label: "Histórico", icon: "📋" },
-  { to: "/insights",  label: "Insights", icon: "📊" },
+  { to: "/",            label: "Contas",      icon: "👤" },
+  { to: "/aquecimento", label: "Aquecimento", icon: "🔥" },
+  { to: "/fila",        label: "Fila",        icon: "🗂️" },
+  { to: "/historico",   label: "Histórico",   icon: "📋" },
+  { to: "/insights",    label: "Insights",    icon: "📊" },
 ];
 
 const EXTRA_NAV = [
