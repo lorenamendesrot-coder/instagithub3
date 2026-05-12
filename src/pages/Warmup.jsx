@@ -1027,7 +1027,6 @@ export default function Warmup() {
                 ? "👥 Nenhuma conta elegível"
                 : `🚀 Gerar Fila${configMode === "target" ? ` (Meta: ${(targetConfig.reels||0)+(targetConfig.feed||0)+(targetConfig.stories||0)} posts/${targetConfig.periodHours}h × ${targetConfig.days}d)` : ""} — ${selectedAccounts.length} conta(s)`}
           </button>
-          </button>
 
           <div style={{ padding: "12px 16px", borderRadius: 10, background: "rgba(245,158,11,0.05)", border: "1px solid rgba(245,158,11,0.15)", fontSize: 11, color: "var(--muted)" }}>
             🛡️ <b style={{ color: "var(--warning)" }}>Proteção ativada:</b> jitter de ±40 minutos e segundos aleatórios em cada slot para evitar padrões detectáveis.
