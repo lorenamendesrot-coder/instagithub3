@@ -46,17 +46,36 @@ export const handler = async (event) => {
     diag.ig_me  = igMe.error ? { error: igMe.error.message, code: igMe.error.code } : { id: igMe.id, username: igMe.username };
     if (!igMe.error) return buildOk({ headers, meData: igMe, token, tokenType: "ig", APP_SECRET });
 
-    // ── 3. ESTRATÉGIA DIRETA: busca pelo ID da conta IG informado pelo usuário ─
-    // Para System User tokens com app em modo desenvolvimento,
-    // o token com "Controle total" acessa a conta diretamente pelo ID
+    // ── 3. ESTRATÉGIA DIRETA: System User token — sem necessidade de Página ───
+    // System User tokens não funcionam com graph.instagram.com/me.
+    // O caminho correto é /me/instagram_accounts no FB Graph API,
+    // que lista contas IG atribuídas diretamente ao System User.
+
+    // 3a. Tenta /me/instagram_accounts (conta IG atribuída diretamente ao System User)
+    const sysuserIGR = await fetch(
+      `${GRAPH_FB}/me/instagram_accounts?fields=${igFields}&limit=10&access_token=${token}`
+    );
+    const sysuserIGD = await sysuserIGR.json();
+    diag.sysuser_ig_accounts = sysuserIGD.error
+      ? { error: sysuserIGD.error.message }
+      : { count: sysuserIGD.data?.length, accounts: sysuserIGD.data?.map(a => a.username) };
+
+    if (!sysuserIGD.error && sysuserIGD.data?.length) {
+      // Se o usuário informou um ID específico, tenta encontrar aquela conta; senão pega a primeira
+      const match = igId
+        ? sysuserIGD.data.find(a => a.id === igId)
+        : sysuserIGD.data[0];
+      if (match) return buildOk({ headers, meData: match, token, tokenType: "system_user", APP_SECRET });
+    }
+
+    // 3b. Se informou o ID, tenta acessar diretamente via FB Graph (requer ativo atribuído no Business)
     if (igId) {
-      // Tenta via Facebook Graph API (System User token)
       const directFBR = await fetch(`${GRAPH_FB}/${igId}?fields=${igFields}&access_token=${token}`);
       const directFBD = await directFBR.json();
       diag.direct_fb_by_id = directFBD.error ? { error: directFBD.error.message } : { id: directFBD.id, username: directFBD.username };
       if (!directFBD.error && directFBD.id) return buildOk({ headers, meData: directFBD, token, tokenType: "system_user", APP_SECRET });
 
-      // Tenta via Instagram Graph API
+      // 3c. Tenta via Instagram Graph API com o ID
       const directIGR = await fetch(`${GRAPH_IG}/${igId}?fields=${igFields}&access_token=${token}`);
       const directIGD = await directIGR.json();
       diag.direct_ig_by_id = directIGD.error ? { error: directIGD.error.message } : { id: directIGD.id, username: directIGD.username };
@@ -106,7 +125,9 @@ export const handler = async (event) => {
     }
 
     if (!foundAccount) {
-      const hint = igId ? "" : "\n\nDica: se usar token de Usuário do Sistema, informe o ID da conta Instagram no campo correspondente.";
+      const hint = `\n\nPara token de Usuário do Sistema, a conta IG precisa estar atribuída como ativo:\n` +
+        `Business Suite → Configurações → Usuários do Sistema → Atribuir ativos → Contas do Instagram.\n` +
+        `Depois gere um novo token.`;
       console.error("[add-account-via-token] DIAG:", JSON.stringify(diag, null, 2));
       return { statusCode: 400, headers, body: JSON.stringify({
         error: "Não foi possível encontrar a conta Instagram vinculada a este token." + hint,
