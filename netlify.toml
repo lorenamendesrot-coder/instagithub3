@@ -42,3 +42,5 @@
 [functions.health-check]
   schedule = "0 7 * * *"
 
+[functions."add-account-via-token"]
+  timeout = 20
