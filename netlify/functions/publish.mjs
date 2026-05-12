@@ -72,15 +72,20 @@ function recordPost(id, ok) {
 
 // ─── Polling do container de vídeo ───────────────────────────────────────────
 async function waitForContainer(id, token) {
-  for (let i = 0; i < 5; i++) {
-    await sleep(4000);
+  for (let i = 0; i < 8; i++) {
+    await sleep(5000);
     try {
-      const r = await fetch(`${graph(token)}/${id}?fields=status_code&access_token=${token}`);
+      const r = await fetch(`${graph(token)}/${id}?fields=status_code,status&access_token=${token}`);
       const d = await r.json();
       if (d.status_code === "FINISHED") return { ready: true };
-      if (d.status_code === "ERROR")    return { ready: false, error: "Instagram: erro no processamento do vídeo" };
+      if (d.status_code === "ERROR") {
+        const reason = d.status || "Erro no processamento";
+        return { ready: false, error: `Instagram: ${reason}` };
+      }
+      // IN_PROGRESS ou PUBLISHED — continua aguardando
     } catch (_) {}
   }
+  // Ainda processando após 40s — retorna pending para o publish-finish continuar
   return { ready: false, pending: true, creation_id: id };
 }
 
@@ -88,6 +93,14 @@ async function waitForContainer(id, token) {
 async function publishOne({ account, media_url, media_type, post_type, caption }) {
   const token = account.access_token;
   if (!token) return { success: false, error: "Token não encontrado. Reconecte a conta." };
+
+  // Verifica se a URL está acessível (Instagram precisa baixar o vídeo)
+  try {
+    const check = await fetch(media_url, { method: "HEAD" });
+    if (!check.ok) return { success: false, error: `URL inacessível (HTTP ${check.status}). Verifique se o arquivo está público.` };
+  } catch {
+    return { success: false, error: "URL inacessível. Verifique a conexão ou se o arquivo está público." };
+  }
 
   const isVideo = media_type === "VIDEO";
   let payload = { access_token: token };
