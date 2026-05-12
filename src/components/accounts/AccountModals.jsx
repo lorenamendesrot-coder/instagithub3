@@ -173,8 +173,10 @@ export function AddViaTokenModal({ onClose, onAdded }) {
         body: JSON.stringify({ access_token: token.trim() }),
       });
       const data = await res.json();
-      if (!res.ok || !data.success) setError(data.error || "Erro ao validar token.");
-      else { setPreview(data.account); setWarning(data.warning || null); }
+      if (!res.ok || !data.success) {
+        const diagStr = data.diag ? "\n\n🔍 DIAGNÓSTICO:\n" + JSON.stringify(data.diag, null, 2) : "";
+        setError((data.error || "Erro ao validar token.") + diagStr);
+      } else { setPreview(data.account); setWarning(data.warning || null); }
     } catch (e) { setError("Erro de rede: " + e.message); }
     setLoading(false);
   };
@@ -302,7 +304,7 @@ export function AddViaTokenModal({ onClose, onAdded }) {
 
           {/* Erro */}
           {error && (
-            <div style={{ padding: "10px 14px", borderRadius: 8, fontSize: 13, background: "rgba(239,68,68,0.08)", color: "var(--danger)", border: "1px solid rgba(239,68,68,0.2)" }}>
+            <div style={{ padding: "10px 14px", borderRadius: 8, fontSize: 12, background: "rgba(239,68,68,0.08)", color: "var(--danger)", border: "1px solid rgba(239,68,68,0.2)", whiteSpace: "pre-wrap", fontFamily: error.includes("DIAGNÓSTICO") ? "monospace" : "inherit", maxHeight: 320, overflowY: "auto" }}>
               ✕ {error}
             </div>
           )}
