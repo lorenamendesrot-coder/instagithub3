@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useAccounts, useHistory } from "../App.jsx";
+import { useAccounts, useHistory, useScheduler } from "../App.jsx";
 import MediaPreview from "../MediaPreview.jsx";
 import Modal from "../Modal.jsx";
 import CatboxUploader from "../CatboxUploader.jsx";
 import { dbGetAll, dbPut, dbPutMany, dbDelete, dbClear } from "../useDB.js";
+import BulkCaptions, { pickCaption } from "../components/BulkCaptions.jsx";
 
 const POST_TYPES = [
   { value: "FEED",  label: "Feed",  desc: "Foto ou vídeo", icon: "🖼" },
@@ -34,103 +35,6 @@ function shuffle(arr) {
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
-}
-
-function useScheduler(addEntry) {
-  const [queue, setQueue] = useState([]);
-  const runningRef = useRef(new Set());
-
-  const reload = useCallback(async () => {
-    const all = await dbGetAll("queue");
-    all.sort((a, b) => a.scheduledAt - b.scheduledAt);
-    setQueue(all);
-  }, []);
-
-  useEffect(() => {
-    reload();
-    const h = () => reload();
-    window.addEventListener("sw:queue-update", h);
-    return () => window.removeEventListener("sw:queue-update", h);
-  }, []);
-
-  useEffect(() => {
-    const tick = async () => {
-      const all = await dbGetAll("queue");
-      const now = Date.now();
-      const due = all.filter((x) => x.scheduledAt <= now && x.status === "pending");
-      if (!due.length) return;
-
-      for (const item of due) {
-        if (runningRef.current.has(item.id)) continue;
-        runningRef.current.add(item.id);
-        await dbPut("queue", { ...item, status: "running" });
-        reload();
-
-        try {
-          const urlsToPost = item.mediaUrls || [item.mediaUrl];
-
-          for (let mi = 0; mi < urlsToPost.length; mi++) {
-            const mediaUrl = urlsToPost[mi];
-            if (mi > 0) await new Promise(r => setTimeout(r, 3000));
-
-            const res = await fetch("/.netlify/functions/publish", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                accounts: item.accounts,
-                media_url: mediaUrl,
-                media_type: item.mediaType,
-                post_type: item.postType,
-                captions: item.captions || {},
-                default_caption: item.caption || "",
-                delay_seconds: 0,
-              }),
-            });
-
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const data = await res.json();
-            const results = data.results || [];
-
-            await addEntry({
-              id: Date.now() + mi,
-              post_type: item.postType,
-              media_url: mediaUrl,
-              media_type: item.mediaType,
-              default_caption: item.caption,
-              results,
-              created_at: new Date().toISOString(),
-              from_scheduler: true,
-            });
-          }
-
-          if (item.loop) {
-            await dbPut("queue", {
-              ...item, status: "pending",
-              scheduledAt: item.scheduledAt + 86400000,
-              runCount: (item.runCount || 0) + 1,
-            });
-          } else {
-            await dbPut("queue", { ...item, status: "done" });
-          }
-        } catch (err) {
-          await dbPut("queue", { ...item, status: "error", error: err.message });
-        }
-
-        runningRef.current.delete(item.id);
-        reload();
-      }
-    };
-
-    const iv = setInterval(tick, 10000);
-    tick();
-    return () => clearInterval(iv);
-  }, [addEntry]);
-
-  const addBatch   = async (b) => { await dbPutMany("queue", b); reload(); };
-  const updateItem = async (item) => { await dbPut("queue", item); reload(); };
-  const removeItem = async (id) => { await dbDelete("queue", id); setQueue((p) => p.filter((x) => x.id !== id)); };
-  const clearQueue = async () => { await dbClear("queue"); setQueue([]); };
-  return { queue, addBatch, updateItem, removeItem, clearQueue, reload };
 }
 
 function AccountPicker({ accounts, selectedIds, onToggle, onSelectAll, onClear }) {
@@ -198,18 +102,20 @@ function CycleBadge({ count }) {
 export default function Schedule() {
   const { accounts } = useAccounts();
   const { addEntry }  = useHistory();
-  const { queue, addBatch, updateItem, removeItem, clearQueue } = useScheduler(addEntry);
+  const { queue, addBatch, updateItem, removeItem, clearQueue } = useScheduler();
 
   const [postType,    setPostType]    = useState("FEED");
   const [mediaType,   setMediaType]   = useState("IMAGE");
   const [caption,     setCaption]     = useState("");
   const [selectedIds, setSelectedIds] = useState([]);
-  const [urlList,     setUrlList]     = useState([{ id: 1, url: "", type: "IMAGE" }]);
+  const [urlList,     setUrlList]     = useState([]);
   const [previewIdx,  setPreviewIdx]  = useState(0);
   const [startTime,   setStartTime]   = useState(nowPlus(1));
   const [intervalMin, setIntervalMin] = useState(0);
   const [intervalMax, setIntervalMax] = useState(20);
   const [loop,        setLoop]        = useState(false);
+  const [bulkCaptions,  setBulkCaptions]  = useState("");
+  const [captionMode,   setCaptionMode]   = useState("roundrobin");
 
   // ── NOVOS: Quantidade por Ciclo + Seleção de Mídias ──
   const [quantityPerCycle, setQuantityPerCycle] = useState(1);
@@ -217,6 +123,8 @@ export default function Schedule() {
 
   const [distMode,     setDistMode]     = useState("all");
   const [showUploader, setShowUploader] = useState(false);
+  const [bulkUrlText,  setBulkUrlText]  = useState("");
+  const [showBulkUrl,  setShowBulkUrl]  = useState(false);
   const [editModal,    setEditModal]    = useState(null);
   const [editTime,     setEditTime]     = useState("");
   const [editCaption,  setEditCaption]  = useState("");
@@ -228,7 +136,7 @@ export default function Schedule() {
   const toggleAcc = (id) => setSelectedIds((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
   const selectAll = () => setSelectedIds(accounts.map((a) => a.id));
   const clearAll  = () => setSelectedIds([]);
-  const addUrl    = () => setUrlList((p) => [...p, { id: Date.now(), url: "", type: isReel ? "VIDEO" : mediaType }]);
+  const addUrl    = () => setUrlList((p) => [...p, { id: Date.now(), url: "", type: isReel ? "VIDEO" : mediaType, name: "", sanitizationReport: null }]);
   const removeUrl = (id) => setUrlList((p) => p.filter((x) => x.id !== id));
   const setUrl    = (id, v) => setUrlList((p) => p.map((x) => x.id === id ? { ...x, url: v } : x));
 
@@ -239,7 +147,14 @@ export default function Schedule() {
   useEffect(() => { setStartTime(nowPlus(1)); }, []);
 
   const handleCatboxUrls = (items) => {
-    const newEntries = items.map((item, i) => ({ id: Date.now() + i, url: item.url, type: item.type }));
+    // Preserva sanitizationReport de cada item vindo do CatboxUploader
+    const newEntries = items.map((item, i) => ({
+      id:                 Date.now() + i,
+      url:                item.url,
+      type:               item.type,
+      name:               item.name || item.url.split("/").pop(),
+      sanitizationReport: item.sanitizationReport || null,
+    }));
     setUrlList((p) => {
       const nonEmpty = p.filter((x) => x.url.trim());
       return nonEmpty.length === 0 ? newEntries : [...nonEmpty, ...newEntries];
@@ -248,41 +163,69 @@ export default function Schedule() {
     if (hasVideo && !isReel) setMediaType("VIDEO");
     else if (!hasVideo && !isReel) setMediaType("IMAGE");
     setShowUploader(false);
+  }
+
+  const handleBulkUrls = () => {
+    const urls = bulkUrlText.split(/[\n,]/).map((u) => u.trim()).filter((u) => u.startsWith("http"));
+    if (!urls.length) return;
+    const newEntries = urls.map((url, i) => ({
+      id:                 Date.now() + i,
+      url,
+      type:               isReel ? "VIDEO" : mediaType,
+      name:               url.split("/").pop().split("?")[0] || "url",
+      sanitizationReport: null, // URLs manuais não passam por sanitização local
+    }));
+    setUrlList((p) => {
+      const nonEmpty = p.filter((x) => x.url.trim());
+      return [...nonEmpty, ...newEntries];
+    });
+    setBulkUrlText("");
+    setShowBulkUrl(false);
   };
 
   // ── Lógica de geração da fila com suporte a quantityPerCycle ──
+  // Parseia bulk captions
+  const parsedCaptions = bulkCaptions.split("\n").map(l => l.trim()).filter(Boolean);
+
   const buildQueueItems = (startTs) => {
     const urls = validUrls.map((x) => x.url.trim());
     const items = [];
     let ts = startTs;
     const qty = Math.max(1, quantityPerCycle);
+    let globalIdx = 0; // índice global para round-robin de captions
 
     const intervalMs = () => randomBetween(
       Math.round(intervalMin * 60000),
       Math.max(Math.round(intervalMax * 60000), Math.round(intervalMin * 60000) + 1000)
     );
 
-    // Retorna `qty` URLs para a conta no índice `accIdx`
     const pickUrls = (accIdx) => {
       if (mediaSameForAll === "same") {
-        // Circula no pool para pegar qty itens começando do início
         return Array.from({ length: qty }, (_, i) => urls[i % urls.length]);
       } else {
-        // Distribui: cada conta pega URLs em posições diferentes
         const shuffled = shuffle(urls);
         return Array.from({ length: qty }, (_, i) => shuffled[(accIdx * qty + i) % shuffled.length]);
       }
     };
 
+    // Resolve a legenda para um índice global
+    const resolveCaption = (idx) => {
+      if (parsedCaptions.length === 0) return caption;
+      return pickCaption(parsedCaptions, captionMode, idx);
+    };
+
     if (distMode === "all") {
-      // Uma entrada: todas as contas, qty mídias
       const mediaUrls = pickUrls(0);
+      const resolvedCaption = resolveCaption(globalIdx++);
       items.push({
         id: `${Date.now()}-all-${Math.random().toString(36).slice(2)}`,
         postType, mediaType,
         mediaUrl: mediaUrls[0],
         mediaUrls,
-        caption, accounts: selectedAccounts,
+        caption: resolvedCaption,
+        bulkCaptions: parsedCaptions,
+        captionMode,
+        accounts: selectedAccounts,
         scheduledAt: ts, status: "pending",
         loop, runCount: 0, distMode: "all",
         quantityPerCycle: qty, mediaSameForAll,
@@ -295,12 +238,16 @@ export default function Schedule() {
       for (let i = 0; i < shuffledAccs.length; i++) {
         if (i > 0) ts += intervalMs();
         const mediaUrls = pickUrls(i);
+        const resolvedCaption = resolveCaption(globalIdx++);
         items.push({
           id: `${Date.now()}-rnd-${i}-${Math.random().toString(36).slice(2)}`,
           postType, mediaType,
           mediaUrl: mediaUrls[0],
           mediaUrls,
-          caption, accounts: [shuffledAccs[i]],
+          caption: resolvedCaption,
+          bulkCaptions: parsedCaptions,
+          captionMode,
+          accounts: [shuffledAccs[i]],
           scheduledAt: ts, status: "pending",
           loop, runCount: 0, distMode: "random",
           quantityPerCycle: qty, mediaSameForAll,
@@ -312,14 +259,17 @@ export default function Schedule() {
     } else if (distMode === "roundrobin") {
       for (let i = 0; i < selectedAccounts.length; i++) {
         if (i > 0) ts += intervalMs();
-        // Round-robin: URLs sequenciais por conta
         const mediaUrls = Array.from({ length: qty }, (_, q) => urls[(i * qty + q) % urls.length]);
+        const resolvedCaption = resolveCaption(globalIdx++);
         items.push({
           id: `${Date.now()}-rr-${i}-${Math.random().toString(36).slice(2)}`,
           postType, mediaType,
           mediaUrl: mediaUrls[0],
           mediaUrls,
-          caption, accounts: [selectedAccounts[i]],
+          caption: resolvedCaption,
+          bulkCaptions: parsedCaptions,
+          captionMode,
+          accounts: [selectedAccounts[i]],
           scheduledAt: ts, status: "pending",
           loop, runCount: 0, distMode: "roundrobin",
           quantityPerCycle: qty, mediaSameForAll,
@@ -340,7 +290,7 @@ export default function Schedule() {
     if (startTs <= Date.now()) return alert("O horário precisa ser no futuro");
     const items = buildQueueItems(startTs);
     await addBatch(items);
-    setUrlList([{ id: 1, url: "", type: isReel ? "VIDEO" : mediaType }]);
+    setUrlList([]);
     setCaption("");
     setSelectedIds([]);
     setQuantityPerCycle(1);
@@ -399,15 +349,15 @@ export default function Schedule() {
     <div className="page">
       <div className="page-header">
         <div>
-          <div className="page-title">Agendamentos</div>
+          <div className="page-title">🗓 Agendar</div>
           <div className="page-subtitle">
-            {pendingCount} pendente(s) · {doneCount} feito(s)
+            {pendingCount} agendado(s) · {doneCount} publicado(s)
             {errorCount > 0 && <span style={{ color: "var(--danger)", marginLeft: 6 }}>· {errorCount} erro(s)</span>}
           </div>
         </div>
-        {queue.length > 0 && (
-          <button className="btn btn-danger btn-sm" onClick={() => setConfirmModal({ type: "clearQueue" })}>Limpar fila</button>
-        )}
+        <a href="/fila" style={{ fontSize: 12, padding: "7px 14px", borderRadius: 8, border: "1px solid var(--border)", color: "var(--muted)", textDecoration: "none", display: "flex", alignItems: "center", gap: 5 }}>
+          🗂 Ver fila {pendingCount > 0 && <span className="badge badge-info" style={{ fontSize: 10 }}>{pendingCount}</span>}
+        </a>
       </div>
 
       <div className="schedule-grid">
@@ -440,39 +390,101 @@ export default function Schedule() {
 
           {/* Mídias */}
           <div className="card">
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-              <div style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                Mídias ({validUrls.length})
-              </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                <button className={`btn btn-sm ${showUploader ? "btn-primary" : "btn-ghost"}`} onClick={() => setShowUploader((p) => !p)}>
-                  ☁️ Upload mídias
-                </button>
-                <button className="btn btn-ghost btn-xs" onClick={addUrl}>+ URL manual</button>
-              </div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+              <button className={`btn btn-sm ${showUploader ? "btn-primary" : "btn-ghost"}`} onClick={() => setShowUploader((p) => !p)}>
+                ☁️ Upload mídias
+              </button>
+              <button className={`btn btn-sm ${showBulkUrl ? "btn-primary" : "btn-ghost"}`} onClick={() => setShowBulkUrl((p) => !p)}>
+                🔗 + URL manual
+              </button>
+              {validUrls.length > 0 && (
+                <span style={{ fontSize: 11, color: "var(--muted)", alignSelf: "center", marginLeft: 4 }}>
+                  ✓ {validUrls.length} URL{validUrls.length > 1 ? "s" : ""}
+                </span>
+              )}
             </div>
+            {/* Painel Upload */}
             {showUploader && (
               <div style={{ marginBottom: 14, padding: "14px", background: "var(--bg3)", borderRadius: 10, border: "1px solid var(--border)" }}>
                 <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 10, color: "var(--accent-light)" }}>☁️ Upload direto para Catbox</div>
                 <CatboxUploader onUrlsReady={handleCatboxUrls} mediaType={mediaType} />
               </div>
             )}
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {urlList.map((item, idx) => (
-                <div key={item.id} style={{ display: "flex", gap: 7, alignItems: "center" }}>
-                  <span style={{ fontSize: 11, color: "var(--muted)", minWidth: 20, textAlign: "right", fontWeight: 600 }}>{idx + 1}.</span>
-                  <span style={{ fontSize: 14, flexShrink: 0 }}>{item.type === "VIDEO" ? "🎬" : "🖼"}</span>
-                  <input
-                    type="url" placeholder="https://files.catbox.moe/..."
-                    value={item.url} onChange={(e) => setUrl(item.id, e.target.value)} onFocus={() => setPreviewIdx(idx)}
-                    style={{ flex: 1, fontSize: 12, padding: "8px 10px" }}
-                  />
-                  {urlList.length > 1 && (
-                    <button className="btn btn-ghost btn-xs" onClick={() => removeUrl(item.id)} style={{ color: "var(--danger)", flexShrink: 0 }}>✕</button>
-                  )}
+
+            {/* Painel URL em massa */}
+            {showBulkUrl && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+                <textarea
+                  placeholder={"Cole as URLs, uma por linha:\nhttps://files.catbox.moe/abc.mp4\nhttps://r2.exemplo.com/video2.mp4\nhttps://cdn.exemplo.com/video3.mp4"}
+                  value={bulkUrlText}
+                  onChange={(e) => setBulkUrlText(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && e.ctrlKey) { e.preventDefault(); handleBulkUrls(); } }}
+                  style={{ fontSize: 11, minHeight: 100, resize: "vertical", fontFamily: "monospace", borderRadius: 8 }}
+                />
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <button className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={handleBulkUrls}
+                    disabled={!bulkUrlText.split(/[\n,]/).some((u) => u.trim().startsWith("http"))}>
+                    ✓ Adicionar URLs
+                  </button>
+                  <span style={{ fontSize: 10, color: "var(--muted)" }}>Ctrl+Enter</span>
                 </div>
-              ))}
-            </div>
+              </div>
+            )}
+
+            {/* Lista de URLs adicionadas com badges de sanitização */}
+            {validUrls.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 8 }}>
+                {validUrls.map((entry, idx) => {
+                  const rep = entry.sanitizationReport;
+                  return (
+                    <div key={entry.id} style={{
+                      padding: "7px 10px", borderRadius: 8, fontSize: 11,
+                      background: rep && !rep.error ? "rgba(34,197,94,0.04)" : "var(--bg3)",
+                      border: `1px solid ${rep && !rep.error ? "rgba(34,197,94,0.18)" : "var(--border)"}`,
+                      display: "flex", flexDirection: "column", gap: 4,
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ fontSize: 12, flexShrink: 0 }}>{entry.type === "VIDEO" ? "🎬" : "🖼"}</span>
+                        <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text)", fontWeight: 500 }}>
+                          {entry.name || entry.url.split("/").pop()}
+                        </span>
+                        <button
+                          onClick={() => { setPreviewIdx(idx); }}
+                          style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: previewIdx === idx ? "rgba(124,92,252,0.15)" : "var(--bg)", color: previewIdx === idx ? "var(--accent-light)" : "var(--muted)", border: `1px solid ${previewIdx === idx ? "var(--accent)" : "var(--border)"}`, cursor: "pointer" }}
+                        >
+                          {previewIdx === idx ? "✓ Preview" : "Preview"}
+                        </button>
+                        <button onClick={() => removeUrl(entry.id)} style={{ background: "none", color: "var(--muted)", fontSize: 14, padding: 0, lineHeight: 1, cursor: "pointer" }}>×</button>
+                      </div>
+                      {/* Badges de sanitização + metadados */}
+                      {rep && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                          {!rep.error ? (
+                            <>
+                              <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "rgba(34,197,94,0.1)", color: "var(--success)", border: "1px solid rgba(34,197,94,0.2)" }}>
+                                ✅ Sanitizado · ID:{rep.uniqueId}
+                              </span>
+                              <span style={{ fontSize: 9, color: "var(--muted)" }}>
+                                {(rep.originalSize / 1024).toFixed(0)}KB→{(rep.sanitizedSize / 1024).toFixed(0)}KB · {rep.durationMs}ms
+                              </span>
+                              {rep.removed?.length > 0 && (
+                                <span style={{ fontSize: 9, color: "var(--muted)" }}>
+                                  Removido: {rep.removed.slice(0, 2).join(", ")}{rep.removed.length > 2 ? ` +${rep.removed.length - 2}` : ""}
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "rgba(245,158,11,0.1)", color: "var(--warning)", border: "1px solid rgba(245,158,11,0.2)" }}>
+                              ⚠ Sanitização parcial
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             {activeUrl && (
               <div style={{ marginTop: 12 }}>
                 <MediaPreview url={activeUrl} mediaType={isReel ? "VIDEO" : mediaType} onTypeDetected={!isReel ? setMediaType : undefined} />
@@ -644,14 +656,15 @@ export default function Schedule() {
             )}
           </div>
 
-          {/* Legenda */}
+          {/* Legendas em Massa */}
           {(postType === "FEED" || postType === "REEL") && (
-            <div className="card">
-              <div className="form-row" style={{ marginBottom: 0 }}>
-                <label>Legenda</label>
-                <textarea placeholder="Escreva a legenda... #hashtags" value={caption} onChange={(e) => setCaption(e.target.value)} style={{ minHeight: 80, fontSize: 13 }} maxLength={2200} />
-              </div>
-            </div>
+            <BulkCaptions
+              value={bulkCaptions}
+              onChange={setBulkCaptions}
+              mode={captionMode}
+              onModeChange={setCaptionMode}
+              previewCount={Math.min(selectedAccounts.length || 3, 6)}
+            />
           )}
 
           {/* Horário */}
@@ -704,122 +717,7 @@ export default function Schedule() {
             {scheduleLabel()}
           </button>
         </div>
-
-        {/* ── Fila ── */}
-        <div>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
-            Fila de agendamentos
-            {pendingCount > 0 && <span className="badge badge-info">{pendingCount}</span>}
-          </div>
-
-          {queue.length === 0 ? (
-            <div className="card" style={{ textAlign: "center", padding: "36px 20px", color: "var(--muted)" }}>
-              <div style={{ fontSize: 30, marginBottom: 12 }}>◷</div>
-              <div style={{ fontWeight: 500, color: "var(--text)", marginBottom: 6 }}>Fila vazia</div>
-              <div style={{ fontSize: 12 }}>Agendamentos aparecem aqui em tempo real.</div>
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-              {queue.map((item) => {
-                const info = STATUS_INFO[item.status] || STATUS_INFO.pending;
-                const scheduledDate = new Date(item.scheduledAt);
-                const isPast = item.scheduledAt < Date.now();
-                const thumbUrl = item.mediaType === "IMAGE" ? item.mediaUrl : null;
-                const qty = item.quantityPerCycle || 1;
-                const mediaCount = item.mediaUrls?.length || 1;
-
-                return (
-                  <div key={item.id} style={{ background: info.bg, border: `1px solid ${info.color}28`, borderLeft: `3px solid ${info.color}`, borderRadius: 10, padding: "9px 11px" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      {thumbUrl ? (
-                        <img src={thumbUrl} alt="" style={{ width: 36, height: 36, borderRadius: 6, objectFit: "cover", flexShrink: 0, border: "1px solid var(--border)" }}
-                          onError={(e) => { e.target.style.display = "none"; }} />
-                      ) : (
-                        <div style={{ width: 36, height: 36, borderRadius: 6, background: "var(--bg3)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, position: "relative" }}>
-                          🎬
-                          {mediaCount > 1 && (
-                            <span style={{ position: "absolute", top: -4, right: -4, background: "var(--accent)", color: "#fff", fontSize: 8, fontWeight: 700, borderRadius: 8, padding: "1px 4px", lineHeight: 1.2 }}>
-                              ×{mediaCount}
-                            </span>
-                          )}
-                        </div>
-                      )}
-
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 3, flexWrap: "wrap" }}>
-                          <span style={{ fontSize: 10, fontWeight: 700, color: info.color }}>{item.status === "running" ? "⟳ " : ""}{info.label.toUpperCase()}</span>
-                          <span style={{ fontSize: 10, color: "var(--muted)", background: "var(--bg3)", padding: "1px 6px", borderRadius: 4 }}>{item.postType}</span>
-                          <span style={{ fontSize: 10, color: "var(--muted)" }}>{item.mediaType === "IMAGE" ? "🖼" : "🎬"}</span>
-                          {qty > 1 && (
-                            <span style={{ fontSize: 9, fontWeight: 700, color: "var(--accent-light)", background: "#7c5cfc20", border: "1px solid var(--accent)", padding: "0 5px", borderRadius: 8 }}>
-                              ×{qty}/ciclo
-                            </span>
-                          )}
-                          {item.loop && <span style={{ fontSize: 9, color: "var(--accent-light)" }}>🔁</span>}
-                          {item.runCount > 0 && <span style={{ fontSize: 9, color: "var(--muted)" }}>run×{item.runCount}</span>}
-                          <span style={{ fontSize: 10, color: isPast && item.status === "pending" ? "var(--warning)" : "var(--muted)", marginLeft: "auto" }}>
-                            🕐 {scheduledDate.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
-                            {isPast && item.status === "pending" && " ⚠"}
-                          </span>
-                        </div>
-
-                        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                          <div style={{ display: "flex" }}>
-                            {(item.accounts || []).slice(0, 5).map((a, i) => (
-                              <div key={a.id} title={`@${a.username}`} style={{ marginLeft: i > 0 ? -6 : 0, zIndex: 5 - i, position: "relative" }}>
-                                {a.profile_picture
-                                  ? <img src={a.profile_picture} alt="" style={{ width: 16, height: 16, borderRadius: "50%", objectFit: "cover", border: "1.5px solid var(--bg2)" }} />
-                                  : <div style={{ width: 16, height: 16, borderRadius: "50%", background: "linear-gradient(135deg, var(--accent), #9b4dfc)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 7, color: "#fff", fontWeight: 700, border: "1.5px solid var(--bg2)" }}>
-                                      {(a.username || "?")[0].toUpperCase()}
-                                    </div>}
-                              </div>
-                            ))}
-                            {(item.accounts || []).length > 5 && <span style={{ fontSize: 9, color: "var(--muted)", marginLeft: 4 }}>+{item.accounts.length - 5}</span>}
-                          </div>
-                          <span style={{ fontSize: 10, color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-                            {mediaCount > 1 ? `${mediaCount} mídias agrupadas` : item.mediaUrl?.split("/").pop()}
-                          </span>
-                        </div>
-
-                        {item.error && <div style={{ fontSize: 10, color: "var(--danger)", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>✗ {item.error}</div>}
-                      </div>
-
-                      <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
-                        {(item.status === "pending" || item.status === "error") && (
-                          <button className="btn btn-ghost btn-xs" onClick={() => openEdit(item)} title="Editar" style={{ padding: "3px 7px", fontSize: 12 }}>✎</button>
-                        )}
-                        <button className="btn btn-ghost btn-xs" style={{ color: "var(--danger)", padding: "3px 7px", fontSize: 12 }}
-                          onClick={() => setConfirmModal({ type: "removeItem", id: item.id })} title="Remover">✕</button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
       </div>
-
-      {/* Modal edição */}
-      {editModal && (
-        <div onClick={() => setEditModal(null)} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: "var(--bg2)", border: "1px solid var(--border2)", borderRadius: 16, padding: 28, width: "100%", maxWidth: 440, boxShadow: "0 24px 80px rgba(0,0,0,0.5)" }}>
-            <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 18 }}>✎ Editar agendamento</div>
-            <div className="form-row">
-              <label>Novo horário</label>
-              <input type="datetime-local" value={editTime} onChange={(e) => setEditTime(e.target.value)} />
-            </div>
-            <div className="form-row">
-              <label>Legenda</label>
-              <textarea value={editCaption} onChange={(e) => setEditCaption(e.target.value)} style={{ minHeight: 80, fontSize: 13 }} />
-            </div>
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <button className="btn btn-ghost btn-sm" onClick={() => setEditModal(null)}>Cancelar</button>
-              <button className="btn btn-primary btn-sm" onClick={saveEdit}>Salvar</button>
-            </div>
-          </div>
-        </div>
-      )}
 
       <Modal open={confirmModal?.type === "clearQueue"} title="Limpar fila?" message="Todos os agendamentos pendentes serão removidos." confirmLabel="Limpar fila" confirmDanger
         onConfirm={() => { clearQueue(); setConfirmModal(null); }} onCancel={() => setConfirmModal(null)} />

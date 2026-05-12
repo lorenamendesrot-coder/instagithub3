@@ -11,8 +11,12 @@ async function apiFetch(url) {
 }
 
 export const handler = async (event) => {
-  const code = event.queryStringParameters?.code;
-  if (!code) return { statusCode: 302, headers: { Location: "/?error=sem_codigo" } };
+  const code    = event.queryStringParameters?.code;
+  const isPopup = event.queryStringParameters?.state === "popup";
+
+  if (!code) {
+    return respondWith({ error: "Código de autorização ausente" }, isPopup);
+  }
 
   const APP_ID       = process.env.META_APP_ID;
   const APP_SECRET   = process.env.META_APP_SECRET;
@@ -120,25 +124,76 @@ export const handler = async (event) => {
     }
 
     if (accounts.length === 0) {
-      return {
-        statusCode: 302,
-        headers: {
-          Location: "/?error=" + encodeURIComponent(
-            "Nenhuma conta Instagram Business encontrada. Verifique se suas páginas do Facebook têm contas Instagram Business vinculadas."
-          ),
-        },
-      };
+      const msg = "Nenhuma conta Instagram Business encontrada. Verifique se suas páginas do Facebook têm contas Instagram Business vinculadas.";
+      return respondWith({ error: msg }, isPopup);
     }
 
-    // Enviar contas para o frontend salvar via /api/accounts
-    const encoded = Buffer.from(JSON.stringify(accounts)).toString("base64url");
-    return { statusCode: 302, headers: { Location: `/?accounts=${encoded}` } };
+    return respondWith({ accounts }, isPopup);
 
   } catch (err) {
     console.error("auth-callback error:", err);
-    return {
-      statusCode: 302,
-      headers: { Location: `/?error=${encodeURIComponent(err.message)}` },
-    };
+    return respondWith({ error: err.message }, isPopup);
   }
 };
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function respondWith({ accounts, error }, isPopup) {
+  if (isPopup) {
+    // Popup: retorna HTML que faz postMessage para a janela pai e fecha
+    const payload = accounts
+      ? JSON.stringify({ type: "OAUTH_ACCOUNTS", accounts })
+      : JSON.stringify({ type: "OAUTH_ERROR",    error: error || "Erro desconhecido" });
+
+    const html = `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Conectando...</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #0d0d12; color: #fff;
+         display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+  .box { text-align: center; padding: 32px; }
+  .spinner { width: 32px; height: 32px; border: 3px solid rgba(255,255,255,0.1);
+             border-top-color: #7c5cfc; border-radius: 50%;
+             animation: spin 0.8s linear infinite; margin: 0 auto 16px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .ok   { font-size: 40px; margin-bottom: 12px; }
+  h2    { font-size: 16px; margin: 0 0 6px; }
+  p     { font-size: 13px; color: rgba(255,255,255,0.5); margin: 0; }
+</style>
+</head>
+<body>
+<div class="box">
+  ${accounts
+    ? `<div class="ok">✅</div>
+       <h2>${accounts.length} conta(s) conectada(s)</h2>
+       <p>Fechando automaticamente...</p>`
+    : `<div class="ok">❌</div>
+       <h2>Erro ao conectar</h2>
+       <p>${error || "Tente novamente."}</p>`
+  }
+</div>
+<script>
+  try {
+    if (window.opener && !window.opener.closed) {
+      window.opener.postMessage(${payload}, window.location.origin);
+    }
+  } catch(e) {}
+  setTimeout(() => window.close(), ${accounts ? 1500 : 3000});
+</script>
+</body>
+</html>`;
+
+    return {
+      statusCode: 200,
+      headers: { "Content-Type": "text/html; charset=utf-8" },
+      body: html,
+    };
+  }
+
+  // Fallback: redirect normal (quando não é popup)
+  if (accounts) {
+    const encoded = Buffer.from(JSON.stringify(accounts)).toString("base64url");
+    return { statusCode: 302, headers: { Location: `/?accounts=${encoded}` } };
+  }
+  return { statusCode: 302, headers: { Location: `/?error=${encodeURIComponent(error)}` } };
+}

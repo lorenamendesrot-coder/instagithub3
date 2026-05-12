@@ -2,17 +2,16 @@
 import { NavLink } from "react-router-dom";
 
 const NAV = [
-  { to: "/",           label: "Contas",       icon: "👤", desc: "Gerencie suas contas" },
-  { to: "/novo",       label: "Novo Post",    icon: "✨", desc: "Criar publicação"     },
-  { to: "/agendar",   label: "Agendar",      icon: "🗓️", desc: "Programar posts"      },
-  { to: "/historico",  label: "Histórico",    icon: "📊", desc: "Posts publicados"     },
-  { to: "/aquecimento",label: "Aquecimento",  icon: "🔥", desc: "Aquecer contas"       },
-  { to: "/protecao",   label: "Proteção",     icon: "🛡️", desc: "Segurança da conta"   },
-  { to: "/logs",        label: "Logs",          icon: "📋", desc: "Checklist e atividade" },
-  { to: "/insights",    label: "Insights",      icon: "📊", desc: "Engajamento dos Reels"  },
+  { to: "/",            label: "Contas",      icon: "👤", desc: "Gerencie suas contas"   },
+  { to: "/aquecimento", label: "Aquecimento", icon: "🔥", desc: "Aquecer contas"         },
+  { to: "/fila",        label: "Fila",        icon: "🗂️", desc: "Agendamentos ativos"    },
+  { to: "/historico",   label: "Histórico",   icon: "📊", desc: "Posts publicados"       },
+  { to: "/protecao",    label: "Proteção",    icon: "🛡️", desc: "Segurança da conta"     },
+  { to: "/insights",    label: "Insights",    icon: "📊", desc: "Engajamento dos Reels"  },
+  { to: "/logs",        label: "Logs",        icon: "📋", desc: "Checklist e atividade"  },
 ];
 
-export default function Sidebar({ accounts, swStatus, oauthUrl, syncing }) {
+export default function Sidebar({ accounts, swStatus, oauthUrl, syncing, onConnectInstagram, oauthStatus }) {
   const swInfo = {
     active:      { color: "#22c55e", title: "Scheduler ativo" },
     error:       { color: "#ef4444", title: "Erro no scheduler" },
@@ -102,11 +101,29 @@ export default function Sidebar({ accounts, swStatus, oauthUrl, syncing }) {
         ))}
       </nav>
 
-      {/* Conectar */}
-      <div style={{ padding: "12px 10px", borderTop: "1px solid var(--border)" }}>
-        <a href={oauthUrl} className="btn btn-primary" style={{ width: "100%", fontSize: 13, textAlign: "center" }}>
-          ＋ Conectar conta
-        </a>
+      {/* Conectar Instagram via popup */}
+      <div style={{ padding: "12px 10px", borderTop: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 6 }}>
+        <button
+          onClick={onConnectInstagram || (() => window.location.href = oauthUrl)}
+          disabled={oauthStatus === "waiting" || oauthStatus === "saving"}
+          className="btn btn-primary"
+          style={{
+            width: "100%", fontSize: 13,
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+            opacity: (oauthStatus === "waiting" || oauthStatus === "saving") ? 0.75 : 1,
+          }}
+        >
+          {oauthStatus === "waiting"
+            ? <><span className="spinner" style={{ width: 12, height: 12, borderTopColor: "#fff" }} /> Aguardando login...</>
+            : oauthStatus === "saving"
+              ? <><span className="spinner" style={{ width: 12, height: 12, borderTopColor: "#fff" }} /> Salvando contas...</>
+              : <>📷 Conectar Instagram</>}
+        </button>
+        {oauthStatus === "waiting" && (
+          <div style={{ fontSize: 10, color: "var(--muted)", textAlign: "center", lineHeight: 1.4 }}>
+            Faça login na janela que abriu e volte aqui automaticamente
+          </div>
+        )}
       </div>
 
       <style>{`

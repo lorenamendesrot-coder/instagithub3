@@ -28,8 +28,8 @@ export default function NewPost() {
   const [toast, setToast]                   = useState(null);
   const [confirmPublish, setConfirmPublish] = useState(false);
 
-  // ✅ Modo de entrada de mídia: "upload" ou "url"
-  const [mediaMode, setMediaMode] = useState("upload");
+  const [showUploader, setShowUploader] = useState(false);
+  const [showBulkUrl,  setShowBulkUrl]  = useState(false);
 
   const isReel = postType === "REEL";
 
@@ -43,7 +43,7 @@ export default function NewPost() {
       setMediaUrl(items[0].url);
       setMediaType(items[0].type);
     }
-    setMediaMode("url"); // volta para URL após upload
+    setShowUploader(false);
   };
 
   const showCaptions = postType === "FEED" || postType === "REEL";
@@ -110,6 +110,7 @@ export default function NewPost() {
       delay_seconds: delaySeconds,
       results,
       created_at: new Date().toISOString(),
+      source: "new_post",
     });
     setProgress({ current: results.length, total: selected.length, results });
     setLoading(false);
@@ -185,42 +186,23 @@ export default function NewPost() {
               </div>
             </div>
 
-            {/* ✅ Mídia — tabs Upload / URL manual */}
+            {/* Mídia */}
             <div className="card">
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
                 <label style={{ margin: 0 }}>Mídia</label>
-                {/* Tabs de modo */}
-                <div style={{ display: "flex", background: "var(--bg3)", borderRadius: 8, padding: 3, gap: 2 }}>
-                  <button
-                    onClick={() => setMediaMode("upload")}
-                    style={{
-                      padding: "5px 12px", borderRadius: 6, fontSize: 12, fontWeight: 500,
-                      background: mediaMode === "upload" ? "var(--bg2)" : "transparent",
-                      color: mediaMode === "upload" ? "var(--accent-light)" : "var(--muted)",
-                      border: mediaMode === "upload" ? "1px solid var(--border)" : "1px solid transparent",
-                      transition: "all 0.12s",
-                    }}
-                  >
-                    ☁️ Upload mídia
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button className={`btn btn-sm ${showUploader ? "btn-primary" : "btn-ghost"}`} onClick={() => setShowUploader((p) => !p)}>
+                    ☁️ Upload mídias
                   </button>
-                  <button
-                    onClick={() => setMediaMode("url")}
-                    style={{
-                      padding: "5px 12px", borderRadius: 6, fontSize: 12, fontWeight: 500,
-                      background: mediaMode === "url" ? "var(--bg2)" : "transparent",
-                      color: mediaMode === "url" ? "var(--accent-light)" : "var(--muted)",
-                      border: mediaMode === "url" ? "1px solid var(--border)" : "1px solid transparent",
-                      transition: "all 0.12s",
-                    }}
-                  >
-                    🔗 URL manual
+                  <button className={`btn btn-sm ${showBulkUrl ? "btn-primary" : "btn-ghost"}`} onClick={() => setShowBulkUrl((p) => !p)}>
+                    🔗 + URL manual
                   </button>
                 </div>
               </div>
 
               {/* Painel Upload */}
-              {mediaMode === "upload" && (
-                <div style={{ padding: "14px", background: "var(--bg3)", borderRadius: 10, border: "1px solid var(--border)" }}>
+              {showUploader && (
+                <div style={{ marginBottom: 12, padding: "14px", background: "var(--bg3)", borderRadius: 10, border: "1px solid var(--border)" }}>
                   <CatboxUploader onUrlsReady={handleCatboxUrl} mediaType={mediaType} />
                   {mediaUrl && (
                     <div style={{ marginTop: 10, fontSize: 12, color: "var(--success)", display: "flex", alignItems: "center", gap: 6 }}>
@@ -234,13 +216,12 @@ export default function NewPost() {
               )}
 
               {/* Painel URL manual */}
-              {mediaMode === "url" && (
-                <input
-                  type="url"
-                  placeholder="https://files.catbox.moe/xxxxxx.jpg"
+              {showBulkUrl && (
+                <textarea
+                  placeholder={"Cole as URLs, uma por linha:\nhttps://files.catbox.moe/abc.jpg\nhttps://r2.exemplo.com/video2.mp4\nhttps://cdn.exemplo.com/img3.png"}
                   value={mediaUrl}
                   onChange={(e) => { setMediaUrl(e.target.value); setMediaValid(false); }}
-                  style={{ fontSize: 13 }}
+                  style={{ fontSize: 12, minHeight: 100, resize: "vertical", fontFamily: "monospace", borderRadius: 8, marginBottom: 8 }}
                 />
               )}
 

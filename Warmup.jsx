@@ -1,5 +1,5 @@
 // Warmup.jsx
-import { uploadFile, uploadFileGarden, warmupDay, isNewAccount, buildWarmupQueue, shadowScore, fmtSize, NEW_ACCOUNT_DAYS, WARMUP_PRESET_2D, TABS, MEDIA_TYPES } from "../components/warmup/WarmupUtils.js";
+import { uploadFile, warmupDay, isNewAccount, buildWarmupQueue, shadowScore, fmtSize, NEW_ACCOUNT_DAYS, WARMUP_PRESET_2D, TABS, MEDIA_TYPES } from "../components/warmup/WarmupUtils.js";
 import MediaUploadZone from "../components/warmup/WarmupMediaUploadZone.jsx";
 import AccountMonitorCard from "../components/warmup/WarmupAccountMonitorCard.jsx";
 // Foco: aquecimento rápido em 2 dias, Reels-first, proteção de contas novas
@@ -7,7 +7,6 @@ import AccountMonitorCard from "../components/warmup/WarmupAccountMonitorCard.js
 
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useAccounts } from "../useAccounts.js";
-import { useWarmupFiles, useScheduler } from "../App.jsx";
 import { dbPut, dbGetAll } from "../useDB.js";
 import BulkCaptions, { pickCaption } from "../components/BulkCaptions.jsx";
 import ReelChecklist from "../components/ReelChecklist.jsx";
@@ -16,31 +15,12 @@ import ReelChecklist from "../components/ReelChecklist.jsx";
 
 export default function Warmup() {
   const { accounts, addAccounts, reloadAccounts } = useAccounts();
-  const { addBatch } = useScheduler();
 
-  // Usa contexto global — arquivos persistem ao trocar de aba
-  const warmupCtx = useWarmupFiles();
-  const { files, setFiles, addFiles: ctxAddFiles, removeFile: ctxRemoveFile, updateFile } = warmupCtx || {
-    files: { reels: [], feed: [], stories: [] },
-    setFiles: () => {},
-    addFiles: () => {},
-    removeFile: () => {},
-    updateFile: () => {},
-  };
-  const removeFile = ctxRemoveFile;
-  const filesRef = useRef(files);
+  const [files,        setFiles]        = useState({ reels: [], feed: [], stories: [] });
   const [uploading,    setUploading]    = useState(false);
-  const [uploadMethod, setUploadMethod] = useState("r2"); // "r2" ou "filegarden"
   const [bulkCaptions, setBulkCaptions] = useState("");
   const [captionMode,  setCaptionMode]  = useState("roundrobin");
-  const [startDate,    setStartDate]    = useState(() => {
-    // Se já passou das 21:00, começa amanhã para não gerar fila vazia hoje
-    const now = new Date();
-    if (now.getHours() >= 21) {
-      now.setDate(now.getDate() + 1);
-    }
-    return now.toISOString().slice(0, 10);
-  });
+  const [startDate,    setStartDate]    = useState(() => new Date().toISOString().slice(0, 10));
   const [distribution, setDistribution] = useState("roundrobin");
   const [useNewOnly,   setUseNewOnly]   = useState(true);
   const [selectedAccIds, setSelectedAccIds] = useState(null); // null = todas selecionadas
@@ -120,7 +100,7 @@ export default function Warmup() {
   }, [syncingNames, eligibleAccounts, addAccounts, reloadAccounts]);
 
   useEffect(() => {
-    if (tab === "monitor" || tab === "preview") {
+    if (tab === "monitor") {
       dbGetAll("queue").then((q) => setDbQueue(q.filter((x) => x.warmup)));
     }
   }, [tab]);
@@ -134,13 +114,9 @@ export default function Warmup() {
     setFiles((prev) => ({ ...prev, [typeId]: [...(prev[typeId] || []), ...entries] }));
   }, []);
 
-  const removeAllFiles = useCallback((typeId) => {
-    setFiles((prev) => ({ ...prev, [typeId]: [] }));
-  }, [setFiles]);
-
-  const resetAllFiles = useCallback(() => {
-    setFiles({ reels: [], feed: [], stories: [] });
-  }, [setFiles]);
+  const removeFile = useCallback((typeId, fileId) => {
+    setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].filter((f) => f.id !== fileId) }));
+  }, []);
 
   // Adiciona mídias a partir de URLs externas (já prontas, sem upload)
   const addFilesByUrl = useCallback((typeId, urls) => {
@@ -188,23 +164,16 @@ export default function Warmup() {
     const uploadOne = async (entry) => {
       try {
         let sanitizationReport = null;
-        const onProgress = (progress) => {
-          setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, progress } : f) }));
-        };
-
-        let url;
-        if (uploadMethod === "filegarden") {
-          url = await uploadFileGarden(entry.file, onProgress);
-        } else {
-          url = await uploadFile(
-            entry.file,
-            onProgress,
-            (report) => {
-              sanitizationReport = report;
-              setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, sanitizationReport: report } : f) }));
-            }
-          );
-        }
+        const url = await uploadFile(
+          entry.file,
+          (progress) => {
+            setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, progress } : f) }));
+          },
+          (report) => {
+            sanitizationReport = report;
+            setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, sanitizationReport: report } : f) }));
+          }
+        );
         setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, status: "done", url, progress: 100, sanitizationReport } : f) }));
       } catch (err) {
         setFiles((prev) => ({ ...prev, [typeId]: prev[typeId].map((f) => f.id === entry.id ? { ...f, status: "error", error: err.message } : f) }));
@@ -230,21 +199,16 @@ export default function Warmup() {
     };
   }, [files]);
 
-  // Mantém filesRef sempre atualizado para evitar stale closure no generateQueue
-  useEffect(() => { filesRef.current = files; }, [files]);
-
   const reelFiles      = (files.reels || []).filter((f) => f.file);
   const parsedCaptions = useMemo(() => bulkCaptions.split("\n").map((l) => l.trim()).filter(Boolean), [bulkCaptions]);
 
   const generateQueue = useCallback(() => {
-    const currentFiles = filesRef.current; // usa ref para garantir valor mais recente
-    const totalDone = ["reels","feed","stories"].reduce((s, t) => s + (currentFiles[t]||[]).filter(f=>f.status==="done").length, 0);
-    if (!totalDone) { alert("Faça o upload de pelo menos 1 mídia antes de gerar a fila."); return; }
+    if (!stats.totalDone) { alert("Faça o upload de pelo menos 1 mídia antes de gerar a fila."); return; }
     if (!selectedAccounts.length) { alert("Selecione pelo menos uma conta para o aquecimento."); return; }
     const mediaByType = {
-      reels:   (currentFiles.reels   || []).filter((f) => f.status === "done").map((f) => ({ url: f.url, name: f.name })),
-      feed:    (currentFiles.feed    || []).filter((f) => f.status === "done").map((f) => ({ url: f.url, name: f.name })),
-      stories: (currentFiles.stories || []).filter((f) => f.status === "done").map((f) => ({ url: f.url, name: f.name })),
+      reels:   (files.reels   || []).filter((f) => f.status === "done").map((f) => ({ url: f.url, name: f.name })),
+      feed:    (files.feed    || []).filter((f) => f.status === "done").map((f) => ({ url: f.url, name: f.name })),
+      stories: (files.stories || []).filter((f) => f.status === "done").map((f) => ({ url: f.url, name: f.name })),
     };
     const activeDays = dayConfig.filter((d) => selectedDays.includes(d.day));
     if (!activeDays.length) { alert("Selecione pelo menos um dia para gerar a fila."); return; }
@@ -255,22 +219,27 @@ export default function Warmup() {
       startDateStr: startDate, distribution,
       loopEnabled, loopDays,
     });
+
     if (!generated.length) {
-      const r = mediaByType.reels.length, f = mediaByType.feed.length, s = mediaByType.stories.length;
-      const daysSummary = activeDays.map(d => `Dia${d.day}(R=${d.reels},F=${d.feed},S=${d.stories})`).join(", ");
+      const reelCount   = mediaByType.reels.length;
+      const feedCount   = mediaByType.feed.length;
+      const storiesCount = mediaByType.stories.length;
       alert(
-        `Nenhum post gerado.\n` +
-        `Mídias prontas: Reels=${r}, Feed=${f}, Stories=${s}\n` +
-        `Contas: ${selectedAccounts.length}\n` +
-        `Dias ativos: ${daysSummary}\n\n` +
-        `Se Reels>0 e Dias com R>0, reporte esse texto.`
+        `Nenhum post foi gerado. Verifique:
+` +
+        `• Mídias prontas: Reels=${reelCount}, Feed=${feedCount}, Stories=${storiesCount}
+` +
+        `• O preset exige Reels para gerar posts — faça upload de pelo menos 1 Reel.
+` +
+        `• Contas selecionadas: ${selectedAccounts.length}`
       );
       return;
     }
+
     setQueue(generated);
     setSaved(false);
     setTab("preview");
-  }, [selectedAccounts, parsedCaptions, captionMode, dayConfig, selectedDays, startDate, distribution, loopEnabled, loopDays]);
+  }, [files, selectedAccounts, parsedCaptions, captionMode, dayConfig, selectedDays, startDate, distribution, stats.totalDone, loopEnabled, loopDays]);
 
   const cancelWarmupQueue = useCallback(async () => {
     if (!window.confirm("Cancelar toda a fila de aquecimento pendente? Posts já publicados não serão desfeitos.")) return;
@@ -292,7 +261,7 @@ export default function Warmup() {
     if (!queue.length) return;
     setSaving(true);
     try {
-      await addBatch(queue);
+      for (const item of queue) await dbPut("queue", item);
       window.dispatchEvent(new CustomEvent("sw:queue-update"));
       setSaved(true);
       setTab("monitor");
@@ -303,7 +272,7 @@ export default function Warmup() {
     } finally {
       setSaving(false);
     }
-  }, [queue, addBatch]);
+  }, [queue]);
 
   const updateDayConfig = (dayNum, key, value) => {
     setDayConfig((prev) =>
@@ -374,37 +343,6 @@ export default function Warmup() {
       {/* ══ TAB: Upload ══════════════════════════════════════════════════════════ */}
       {tab === "upload" && (
         <div>
-          {/* Botão reset geral — só aparece se há arquivos */}
-          {(stats.reelsTotal > 0 || stats.feedTotal > 0 || stats.storiesTotal > 0) && (
-            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
-              <button
-                className="btn btn-ghost btn-sm"
-                style={{ fontSize: 11, color: "var(--danger)", borderColor: "rgba(239,68,68,0.3)" }}
-                onClick={resetAllFiles}
-              >
-                🗑 Resetar todos os uploads
-              </button>
-            </div>
-          )}
-          {/* Seletor de método de upload */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 12, color: "var(--muted)", fontWeight: 600 }}>Destino:</span>
-            {[
-              { id: "r2",         label: "☁️ Cloudflare R2", desc: "Recomendado — sem limite de tamanho" },
-              { id: "filegarden", label: "🌿 FilGarden",      desc: "Alternativo — até ~100MB" },
-            ].map(({ id, label, desc }) => (
-              <button key={id} onClick={() => setUploadMethod(id)}
-                className={`btn btn-sm ${uploadMethod === id ? "btn-primary" : "btn-ghost"}`}
-                style={{ fontSize: 11 }} title={desc}>
-                {label}
-              </button>
-            ))}
-            {uploadMethod === "filegarden" && (
-              <span style={{ fontSize: 11, color: "var(--warning)", background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.2)", padding: "2px 8px", borderRadius: 8 }}>
-                ⚠️ Arquivos ficam públicos no FilGarden
-              </span>
-            )}
-          </div>
           <div style={{
             padding: "12px 16px", borderRadius: 10, marginBottom: 20,
             background: "rgba(124,92,252,0.06)", border: "1px solid rgba(124,92,252,0.2)",
@@ -426,7 +364,6 @@ export default function Warmup() {
                   files={files}
                   onAddFiles={addFiles}
                   onRemoveFile={removeFile}
-                  onRemoveAll={removeAllFiles}
                   onUploadAll={uploadAll}
                   uploading={uploading}
                   urlInput={urlInputs[typeConfig.id]}
