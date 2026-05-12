@@ -2,14 +2,24 @@
 import { useEffect, useRef, useCallback } from "react";
 import { dbGetAll, dbPut } from "./useDB.js";
 
-const GRAPH = "https://graph.facebook.com/v21.0";
+const GRAPH_FB = "https://graph.facebook.com/v21.0";
+const GRAPH_IG = "https://graph.instagram.com/v21.0";
+
+// Tokens do Instagram Login começam com "IGAA"
+// Tokens do Facebook Login começam com "EAA"
+function isIGToken(token) {
+  return token?.startsWith("IGAA");
+}
+
 // Verifica tokens a cada 6 horas
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 async function checkToken(account) {
   try {
-    const res  = await fetch(`${GRAPH}/me?fields=id&access_token=${account.access_token}`);
-    const data = await res.json();
+    const token = account.access_token;
+    const base  = isIGToken(token) ? GRAPH_IG : GRAPH_FB;
+    const res   = await fetch(`${base}/me?fields=id&access_token=${token}`);
+    const data  = await res.json();
     if (data.error?.code === 190) return "expired";
     if (data.error) return "invalid";
     return "valid";
@@ -32,11 +42,9 @@ export function useTokenCheck({ accounts, onExpired }) {
     for (const acc of accounts) {
       const status = await checkToken(acc);
       if (status === "expired" || status === "invalid") {
-        // Persiste flag no IndexedDB para exibir badge na tela de Contas
         await dbPut("sessions", { ...acc, token_status: "expired" });
         expired.push({ ...acc, token_status: "expired" });
       } else if (status === "valid") {
-        // Limpa flag se estava marcado antes
         if (acc.token_status === "expired") {
           await dbPut("sessions", { ...acc, token_status: "valid" });
         }
@@ -49,12 +57,8 @@ export function useTokenCheck({ accounts, onExpired }) {
   }, [accounts, onExpired]);
 
   useEffect(() => {
-    // Verificação inicial (com delay de 5s para não bloquear o carregamento)
     const initial = setTimeout(runCheck, 5000);
-
-    // Verificação periódica
     timerRef.current = setInterval(runCheck, CHECK_INTERVAL_MS);
-
     return () => {
       clearTimeout(initial);
       clearInterval(timerRef.current);
