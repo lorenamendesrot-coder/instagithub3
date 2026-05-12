@@ -352,9 +352,8 @@ export default function Accounts() {
   };
 
   const handleAddViaToken = async (account) => {
-    await saveAccount(account);
-    toast.success(`@${account.username} adicionada com sucesso!`);
-    await loadAccounts();
+    await addAccounts([account]);
+    setTimeout(() => fetchInsights(account, true), 600);
   };
 
   const handleAddViaPage = async (account) => {
@@ -387,6 +386,9 @@ export default function Accounts() {
           </button>
           <button className="btn btn-ghost btn-sm" onClick={() => setShowPageIdModal(true)}>
             🔑 Adicionar via Page ID
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={() => setShowTokenModal(true)}>
+            🔐 Adicionar via Token
           </button>
           <button
               onClick={openPopup}
