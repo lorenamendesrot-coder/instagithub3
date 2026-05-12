@@ -50,19 +50,23 @@ function sumInsightValues(insightObj) {
 // para certos tipos de conta. Falhas individuais não interrompem o fluxo.
 async function fetchInsightsWindow(igId, token, sinceUnix, untilUnix) {
   const metrics = ["reach", "profile_views", "website_clicks", "follower_count"];
-  const url =
-    `${graphBase(token)}${igId}/insights` +
-    `?metric=${metrics.join(",")}` +
-    `&period=day` +
-    `&since=${sinceUnix}&until=${untilUnix}` +
-    `&access_token=${token}`;
 
+  // Tokens IGAA (Instagram Login) usam /me/insights
+  // Tokens EAA (Facebook Login) usam /{igId}/insights
+  const base = isIGToken(token)
+    ? `${GRAPH_IG}/me/insights`
+    : `${GRAPH_FB}/${igId}/insights`;
+
+  const url = `${base}?metric=${metrics.join(",")}&period=day&since=${sinceUnix}&until=${untilUnix}&access_token=${token}`;
   const data = await gfetch(url);
 
-  // Se a chamada inteira falhou, tentamos uma chamada conservadora só com `reach`
   if (data.error || !data.data) {
+    // Fallback só com reach
+    const fallbackBase = isIGToken(token)
+      ? `${GRAPH_IG}/me/insights`
+      : `${GRAPH_FB}/${igId}/insights`;
     const fallback = await gfetch(
-      `${graphBase(token)}${igId}/insights?metric=reach&period=day&since=${sinceUnix}&until=${untilUnix}&access_token=${token}`
+      `${fallbackBase}?metric=reach&period=day&since=${sinceUnix}&until=${untilUnix}&access_token=${token}`
     );
     if (fallback.error || !fallback.data) {
       return { available: false, error: fallback.error?.message || data.error?.message };
@@ -70,21 +74,16 @@ async function fetchInsightsWindow(igId, token, sinceUnix, untilUnix) {
     return {
       available: true,
       reach: sumInsightValues(fallback.data.find((m) => m.name === "reach")),
-      profile_views: null,
-      website_clicks: null,
-      follower_count: null,
-      partial: true,
+      profile_views: null, website_clicks: null, follower_count: null, partial: true,
     };
   }
 
   const findMetric = (name) => data.data.find((m) => m.name === name);
-
   return {
     available: true,
     reach:           sumInsightValues(findMetric("reach")),
     profile_views:   sumInsightValues(findMetric("profile_views")),
     website_clicks:  sumInsightValues(findMetric("website_clicks")),
-    // follower_count não é cumulativo — pegamos o último valor da janela
     follower_count:  (() => {
       const m = findMetric("follower_count");
       if (!m?.values?.length) return null;
