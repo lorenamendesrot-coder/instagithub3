@@ -13,7 +13,7 @@ export const handler = async (event) => {
 
   const APP_ID      = process.env.META_APP_ID;
   const APP_SECRET  = process.env.META_APP_SECRET;
-  const BUSINESS_ID = process.env.META_BUSINESS_ID; // opcional — fallback manual
+  const BUSINESS_ID = process.env.META_BUSINESS_ID;
 
   if (!APP_ID || !APP_SECRET)
     return { statusCode: 500, headers, body: JSON.stringify({ error: "Configuração do app ausente (META_APP_ID / META_APP_SECRET)" }) };
@@ -34,95 +34,73 @@ export const handler = async (event) => {
     try {
       const r = await fetch(`${GRAPH_FB}/debug_token?input_token=${token}&access_token=${APP_ID}|${APP_SECRET}`);
       const d = await r.json();
-      diag.debug_token = { app_id: d.data?.app_id, type: d.data?.type, is_valid: d.data?.is_valid, scopes: d.data?.scopes };
+      diag.debug_token = { type: d.data?.type, is_valid: d.data?.is_valid, scopes: d.data?.scopes };
       if (d.data && !d.data.is_valid)
         return { statusCode: 401, headers, body: JSON.stringify({ error: "Token inválido: " + (d.data.error?.message || "expirado/revogado"), diag }) };
     } catch (e) { diag.debug_token = { exception: e.message }; }
 
-    // ── 2. graph.instagram.com/me (token nativo IG) ───────────────────────────
+    // ── 2. graph.instagram.com/me (token nativo IG/OAuth) ────────────────────
     const igMeR = await fetch(`${GRAPH_IG}/me?fields=${igFields}&access_token=${token}`);
     const igMe  = await igMeR.json();
     diag.ig_me  = igMe.error ? { error: igMe.error.message, code: igMe.error.code } : { id: igMe.id, username: igMe.username };
     if (!igMe.error) return buildOk({ headers, meData: igMe, token, tokenType: "ig", APP_SECRET });
 
-    // ── 3. FB /me ─────────────────────────────────────────────────────────────
+    // ── 3. FB /me — identifica o system user ─────────────────────────────────
     const fbMeR = await fetch(`${GRAPH_FB}/me?fields=id,name&access_token=${token}`);
     const fbMe  = await fbMeR.json();
     diag.fb_me  = fbMe.error ? { error: fbMe.error.message } : { id: fbMe.id, name: fbMe.name };
     if (fbMe.error)
-      return { statusCode: 400, headers, body: JSON.stringify({ error: "Token sem acesso à Graph API: " + fbMe.error.message, diag }) };
+      return { statusCode: 400, headers, body: JSON.stringify({ error: "Token inválido: " + fbMe.error.message, diag }) };
 
     const uid = fbMe.id;
     let foundAccount = null;
 
-    // ── 4. Descobrir business_ids ─────────────────────────────────────────────
-    // Estratégia A: token do próprio usuário (funciona se for admin do BM)
-    // Estratégia B: App Access Token (APP_ID|APP_SECRET) — descobre negócios
-    //               associados ao app, independente do nível do system user
-    // Estratégia C: META_BUSINESS_ID fixo como último fallback
-    const bizIds = new Set();
+    // ── 4. Busca ativos IG atribuídos ao system user via App Token ────────────
+    // O App Token (APP_ID|APP_SECRET) tem visibilidade sobre os ativos do BM
+    // mesmo quando o system user não é admin
+    const appToken = `${APP_ID}|${APP_SECRET}`;
 
-    // A: via token do usuário
-    const bizUserR = await fetch(`${GRAPH_FB}/me/businesses?fields=id,name&access_token=${token}`);
+    // 4a. assigned_instagram_accounts do system user (via app token)
+    const assignedR = await fetch(`${GRAPH_FB}/${uid}/assigned_instagram_accounts?fields=${igFields}&limit=100&access_token=${appToken}`);
+    const assignedD = await assignedR.json();
+    diag.assigned_ig_via_app_token = assignedD.error
+      ? { error: assignedD.error.message }
+      : { count: assignedD.data?.length, accounts: assignedD.data?.map(a => a.username) };
+    if (!assignedD.error && assignedD.data?.[0]) foundAccount = assignedD.data[0];
+
+    // 4b. instagram_accounts do system user (via app token)
+    if (!foundAccount) {
+      const igAccR = await fetch(`${GRAPH_FB}/${uid}/instagram_accounts?fields=${igFields}&limit=100&access_token=${appToken}`);
+      const igAccD = await igAccR.json();
+      diag.ig_accounts_via_app_token = igAccD.error
+        ? { error: igAccD.error.message }
+        : { count: igAccD.data?.length, accounts: igAccD.data?.map(a => a.username) };
+      if (!igAccD.error && igAccD.data?.[0]) foundAccount = igAccD.data[0];
+    }
+
+    // ── 5. Busca via business_id (portfólio) usando App Token ─────────────────
+    const bizIds = new Set();
+    if (BUSINESS_ID) bizIds.add(BUSINESS_ID);
+
+    // Tenta descobrir negócios via token do usuário
+    const bizUserR = await fetch(`${GRAPH_FB}/me/businesses?fields=id&access_token=${token}`);
     const bizUserD = await bizUserR.json();
-    diag.businesses_via_user = bizUserD.error ? { error: bizUserD.error.message } : { count: bizUserD.data?.length };
     if (!bizUserD.error) bizUserD.data?.forEach(b => bizIds.add(b.id));
 
-    // B: via App Access Token — busca negócios que têm o app instalado
-    if (!bizIds.size) {
-      const appToken  = `${APP_ID}|${APP_SECRET}`;
-      const bizAppR   = await fetch(`${GRAPH_FB}/${APP_ID}/app_installs?fields=business&access_token=${appToken}`);
-      const bizAppD   = await bizAppR.json();
-      diag.businesses_via_app = bizAppD.error ? { error: bizAppD.error.message } : { count: bizAppD.data?.length };
-      if (!bizAppD.error) bizAppD.data?.forEach(item => { if (item.business?.id) bizIds.add(item.business.id); });
-    }
-
-    // B2: via app_subscribed_businesses (endpoint alternativo)
-    if (!bizIds.size) {
-      const appToken = `${APP_ID}|${APP_SECRET}`;
-      const subR     = await fetch(`${GRAPH_FB}/${APP_ID}/subscribed_apps?access_token=${appToken}`);
-      const subD     = await subR.json();
-      diag.subscribed = subD.error ? { error: subD.error.message } : subD;
-    }
-
-    // B3: buscar system users do app via App Token — e o negócio deles
-    if (!bizIds.size) {
-      const appToken = `${APP_ID}|${APP_SECRET}`;
-      // Descobre negócio pelo system user ID usando app token
-      const suBizR = await fetch(`${GRAPH_FB}/${uid}?fields=id,name&access_token=${appToken}`);
-      const suBizD = await suBizR.json();
-      diag.su_via_app_token = suBizD.error ? { error: suBizD.error.message } : suBizD;
-    }
-
-    // C: META_BUSINESS_ID fixo
-    if (!bizIds.size && BUSINESS_ID) {
-      bizIds.add(BUSINESS_ID);
-      diag.business_id_source = "META_BUSINESS_ID env (fallback)";
-    }
-
-    diag.biz_ids_to_search = [...bizIds];
-
-    // ── 5. Busca contas IG em cada business_id ────────────────────────────────
     for (const bizId of bizIds) {
       if (foundAccount) break;
 
-      // 5a. instagram_accounts do negócio (via token do usuário)
-      const oR = await fetch(`${GRAPH_FB}/${bizId}/instagram_accounts?fields=${igFields}&limit=100&access_token=${token}`);
+      // instagram_accounts do portfólio via App Token
+      const oR = await fetch(`${GRAPH_FB}/${bizId}/instagram_accounts?fields=${igFields}&limit=100&access_token=${appToken}`);
       const oD = await oR.json();
-      diag[`biz_${bizId}_ig_accounts`] = oD.error ? { error: oD.error.message } : { count: oD.data?.length, accounts: oD.data?.map(a => a.username) };
+      diag[`biz_${bizId}_ig_via_app`] = oD.error ? { error: oD.error.message } : { count: oD.data?.length, accounts: oD.data?.map(a => a.username) };
       if (!oD.error && oD.data?.[0]) { foundAccount = oD.data[0]; break; }
 
-      // 5b. owned_instagram_accounts
-      const ooR = await fetch(`${GRAPH_FB}/${bizId}/owned_instagram_accounts?fields=${igFields}&limit=100&access_token=${token}`);
+      // owned_instagram_accounts via App Token
+      const ooR = await fetch(`${GRAPH_FB}/${bizId}/owned_instagram_accounts?fields=${igFields}&limit=100&access_token=${appToken}`);
       const ooD = await ooR.json();
-      diag[`biz_${bizId}_owned_ig`] = ooD.error ? { error: ooD.error.message } : { count: ooD.data?.length, accounts: ooD.data?.map(a => a.username) };
+      diag[`biz_${bizId}_owned_ig_via_app`] = ooD.error ? { error: ooD.error.message } : { count: ooD.data?.length, accounts: ooD.data?.map(a => a.username) };
       if (!ooD.error && ooD.data?.[0]) { foundAccount = ooD.data[0]; break; }
-
-      // 5c. client_instagram_accounts
-      const cR = await fetch(`${GRAPH_FB}/${bizId}/client_instagram_accounts?fields=${igFields}&limit=100&access_token=${token}`);
-      const cD = await cR.json();
-      diag[`biz_${bizId}_client_ig`] = cD.error ? { error: cD.error.message } : { count: cD.data?.length, accounts: cD.data?.map(a => a.username) };
-      if (!cD.error && cD.data?.[0]) { foundAccount = cD.data[0]; break; }
     }
 
     // ── 6. Páginas do usuário → instagram_business_account ───────────────────
@@ -133,12 +111,23 @@ export const handler = async (event) => {
       if (!acD.error) for (const p of acD.data || []) if (p.instagram_business_account) { foundAccount = p.instagram_business_account; break; }
     }
 
-    // ── 7. assigned_pages ─────────────────────────────────────────────────────
+    // ── 7. assigned_pages do system user ─────────────────────────────────────
     if (!foundAccount) {
       const apR = await fetch(`${GRAPH_FB}/${uid}/assigned_pages?fields=id,name,instagram_business_account{${igFields}}&limit=100&access_token=${token}`);
       const apD = await apR.json();
       diag.assigned_pages = apD.error ? { error: apD.error.message } : { count: apD.data?.length };
       if (!apD.error) for (const p of apD.data || []) if (p.instagram_business_account) { foundAccount = p.instagram_business_account; break; }
+    }
+
+    // ── 8. Busca direta pelo ID da conta IG via token do system user ──────────
+    // Se o system user tem "Controle total" sobre a conta, o token dele
+    // deve conseguir acessar a conta diretamente pelo ID
+    if (!foundAccount && BUSINESS_ID) {
+      // Busca todas as contas IG do portfólio via token do próprio system user
+      const directR = await fetch(`${GRAPH_FB}/${BUSINESS_ID}/instagram_accounts?fields=${igFields}&limit=100&access_token=${token}`);
+      const directD = await directR.json();
+      diag.direct_biz_ig_via_user_token = directD.error ? { error: directD.error.message } : { count: directD.data?.length, accounts: directD.data?.map(a => a.username) };
+      if (!directD.error && directD.data?.[0]) foundAccount = directD.data[0];
     }
 
     if (!foundAccount) {
