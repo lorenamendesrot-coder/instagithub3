@@ -13,7 +13,7 @@ const GRAPH_IG = "https://graph.instagram.com";
 // Tokens do Instagram Login começam com 'IGAA'
 // Tokens do Facebook Login começam com 'EAA'
 function isIGToken(token) { return token?.startsWith('IGAA'); }
-function graphBase(token) { return isIGToken(token) ? GRAPH_IG : GRAPH_FB + '/'; }
+function graphBase(token) { return isIGToken(token) ? GRAPH_IG + '/' : GRAPH_FB + '/'; }
 // Para chamadas que precisam de versão explícita no FB Graph
 const GRAPH = GRAPH_FB;
 
@@ -234,11 +234,14 @@ export const handler = async (event) => {
 
   try {
     // ── 1. Perfil ──────────────────────────────────────────────────────────
-    const profileFields = [
-      "id", "username", "name", "biography", "website",
-      "profile_picture_url",
-      "followers_count", "follows_count", "media_count",
-    ].join(",");
+    // Campos variam por tipo de token:
+    // - Instagram Login (IGAA): usa graph.instagram.com/me com novos campos
+    // - Facebook Login (EAA): usa graph.facebook.com/v21.0/{id} com campos antigos
+    const profileFields = isIGToken(access_token)
+      ? ["id", "username", "name", "biography", "website",
+         "profile_picture_url", "followers_count", "following_count", "media_count"].join(",")
+      : ["id", "username", "name", "biography", "website",
+         "profile_picture_url", "followers_count", "follows_count", "media_count"].join(",");
 
     const graphUrl = isIGToken(access_token)
       ? `${GRAPH_IG}/me?fields=${profileFields}&access_token=${access_token}`
@@ -308,7 +311,7 @@ export const handler = async (event) => {
         profile_picture:  profileData.profile_picture_url || "",
         account_type:     profileData.account_type || "BUSINESS",
         followers_count:  profileData.followers_count ?? null,
-        follows_count:    profileData.follows_count ?? null,
+        follows_count:    profileData.following_count ?? profileData.follows_count ?? null,
         media_count:      profileData.media_count ?? null,
 
         // Quota
