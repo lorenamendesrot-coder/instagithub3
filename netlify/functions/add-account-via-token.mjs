@@ -45,7 +45,7 @@ export const handler = async (event) => {
 
     // ── 2. Buscar dados básicos da conta Instagram ────────────────────────────
     // Tenta graph.instagram.com primeiro (tokens de dashboard/OAuth)
-    // Se falhar, tenta via graph.facebook.com (System User tokens)
+    // Se falhar, tenta via graph.facebook.com (System User tokens e User tokens EAA)
     let meData = null;
     let tokenType = "ig"; // "ig" ou "system_user"
 
@@ -56,42 +56,78 @@ export const handler = async (event) => {
       meData = meDataIG;
       tokenType = "ig";
     } else {
-      // Tenta via Facebook Graph API — System User Token
-      // Precisa buscar contas Instagram vinculadas via /me/accounts ou diretamente
+      // Tenta via Facebook Graph API — System User Token ou User Access Token (EAA)
       const meFBRes  = await fetch(`${GRAPH_FB}/me?fields=id,name&access_token=${token}`);
       const meFBData = await meFBRes.json();
 
       if (meFBData.error)
         return { statusCode: 400, headers, body: JSON.stringify({ error: "Erro ao buscar conta: " + (meDataIG.error.message || meFBData.error.message) }) };
 
-      // Tenta 3 endpoints diferentes para System User tokens
+      // Tenta múltiplos endpoints para System User tokens e User Access Tokens (EAA)
       let foundAccount = null;
 
-      // Tentativa 1: instagram_accounts direto no System User
-      const t1Res  = await fetch(`${GRAPH_FB}/${meFBData.id}/instagram_accounts?fields=id,username,name,profile_picture_url,account_type,followers_count,media_count&access_token=${token}`);
+      const igFields = "id,username,name,profile_picture_url,account_type,followers_count,media_count";
+
+      // Tentativa 1: instagram_accounts direto no usuário (System User)
+      const t1Res  = await fetch(`${GRAPH_FB}/${meFBData.id}/instagram_accounts?fields=${igFields}&access_token=${token}`);
       const t1Data = await t1Res.json();
       if (!t1Data.error && t1Data.data?.[0]) foundAccount = t1Data.data[0];
 
-      // Tentativa 2: via páginas vinculadas → instagram_business_account
+      // Tentativa 2: via páginas vinculadas → instagram_business_account (User Access Token padrão)
       if (!foundAccount) {
-        const t2Res  = await fetch(`${GRAPH_FB}/${meFBData.id}/accounts?fields=instagram_business_account{id,username,name,profile_picture_url,account_type,followers_count,media_count}&access_token=${token}`);
+        const t2Res  = await fetch(`${GRAPH_FB}/${meFBData.id}/accounts?fields=instagram_business_account{${igFields}}&access_token=${token}`);
         const t2Data = await t2Res.json();
-        if (!t2Data.error && t2Data.data?.[0]?.instagram_business_account) {
-          foundAccount = t2Data.data[0].instagram_business_account;
+        if (!t2Data.error && t2Data.data?.length) {
+          // Percorre todas as páginas em busca de uma conta IG vinculada
+          for (const page of t2Data.data) {
+            if (page.instagram_business_account) {
+              foundAccount = page.instagram_business_account;
+              break;
+            }
+          }
         }
       }
 
-      // Tentativa 3: owned_instagram_accounts
+      // Tentativa 3: owned_instagram_accounts (System User no Business Manager)
       if (!foundAccount) {
-        const t3Res  = await fetch(`${GRAPH_FB}/${meFBData.id}/owned_instagram_accounts?fields=id,username,name,profile_picture_url,account_type,followers_count,media_count&access_token=${token}`);
+        const t3Res  = await fetch(`${GRAPH_FB}/${meFBData.id}/owned_instagram_accounts?fields=${igFields}&access_token=${token}`);
         const t3Data = await t3Res.json();
         if (!t3Data.error && t3Data.data?.[0]) foundAccount = t3Data.data[0];
+      }
+
+      // Tentativa 4: client_pages → instagram_business_account (BM com ativo de cliente)
+      if (!foundAccount) {
+        const t4Res  = await fetch(`${GRAPH_FB}/${meFBData.id}/client_pages?fields=instagram_business_account{${igFields}}&access_token=${token}`);
+        const t4Data = await t4Res.json();
+        if (!t4Data.error && t4Data.data?.length) {
+          for (const page of t4Data.data) {
+            if (page.instagram_business_account) {
+              foundAccount = page.instagram_business_account;
+              break;
+            }
+          }
+        }
+      }
+
+      // Tentativa 5: via /me/businesses → instagram_accounts (BM owner)
+      if (!foundAccount) {
+        const t5Res  = await fetch(`${GRAPH_FB}/me/businesses?fields=instagram_accounts{${igFields}}&access_token=${token}`);
+        const t5Data = await t5Res.json();
+        if (!t5Data.error && t5Data.data?.length) {
+          for (const biz of t5Data.data) {
+            if (biz.instagram_accounts?.data?.[0]) {
+              foundAccount = biz.instagram_accounts.data[0];
+              break;
+            }
+          }
+        }
       }
 
       if (!foundAccount)
         return { statusCode: 400, headers, body: JSON.stringify({ error: "Não foi possível encontrar conta Instagram vinculada a este token. Verifique se a conta Instagram foi adicionada como ativo do usuário do sistema no Business Manager." }) };
 
       meData = foundAccount;
+      tokenType = "system_user";
     }
 
     if (!meData?.id)
