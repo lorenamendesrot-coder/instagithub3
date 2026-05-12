@@ -81,14 +81,30 @@ export function isNewAccount(acc) {
 }
 
 // Upload direto do browser para R2 via presigned URL — sem limite de tamanho
+// Detecta o MIME type correto pelo nome/extensão do arquivo
+function detectMime(file) {
+  if (file.type && file.type !== "application/octet-stream") return file.type;
+  const ext = file.name.split(".").pop().toLowerCase();
+  const MAP = {
+    mp4: "video/mp4", mov: "video/quicktime", webm: "video/webm",
+    avi: "video/x-msvideo", mkv: "video/x-matroska",
+    jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png",
+    webp: "image/webp", gif: "image/gif", heic: "image/heic",
+  };
+  return MAP[ext] || "video/mp4";
+}
+
 export async function uploadFile(file, onProgress, onSanitized) {
   onProgress(2);
+
+  // Detectar MIME correto — file.type pode estar vazio em drag-and-drop
+  const mimeType = detectMime(file);
 
   // Passo 1: obter presigned URL
   const presignRes = await fetch("/api/r2-presign", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ fileName: file.name, mimeType: file.type || "video/mp4" }),
+    body: JSON.stringify({ fileName: file.name, mimeType }),
   });
   if (!presignRes.ok) {
     const err = await presignRes.json().catch(() => ({}));
@@ -101,26 +117,36 @@ export async function uploadFile(file, onProgress, onSanitized) {
   let fileToUpload = file;
   try {
     const { file: sanitized, report } = await sanitizeFile(file);
-    fileToUpload = sanitized;
+    // Garantir que o arquivo sanitizado tem o MIME correto
+    // (File criado com type: "" perde o tipo — recriar com tipo explícito)
+    fileToUpload = sanitized.type
+      ? sanitized
+      : new File([sanitized], sanitized.name, { type: mimeType, lastModified: sanitized.lastModified });
     if (onSanitized) onSanitized(report);
     onProgress(18);
   } catch (err) {
     console.warn("Sanitização falhou, usando arquivo original:", err.message);
     if (onSanitized) onSanitized({ error: err.message, supported: false });
+    // Mesmo no fallback, garantir MIME correto
+    fileToUpload = new File([file], file.name, { type: mimeType, lastModified: file.lastModified });
   }
 
   // Passo 3: PUT direto no R2 com progresso real via XHR
+  // Content-Type DEVE bater exatamente com o que foi assinado no presign
   await new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 80) + 18);
     };
-    xhr.onload    = () => xhr.status === 200 ? resolve() : reject(new Error(`R2 HTTP ${xhr.status}`));
+    xhr.onload    = () => {
+      if (xhr.status === 200) resolve();
+      else reject(new Error(`R2 HTTP ${xhr.status} — verifique CORS do bucket`));
+    };
     xhr.onerror   = () => reject(new Error("Erro de rede durante o upload"));
-    xhr.ontimeout = () => reject(new Error("Timeout no upload"));
-    xhr.timeout   = 5 * 60 * 1000;
+    xhr.ontimeout = () => reject(new Error("Timeout no upload — arquivo muito grande?"));
+    xhr.timeout   = 10 * 60 * 1000; // 10 min para arquivos grandes
     xhr.open("PUT", presignedUrl);
-    xhr.setRequestHeader("Content-Type", fileToUpload.type || "video/mp4");
+    xhr.setRequestHeader("Content-Type", mimeType); // usa mimeType detectado, não file.type
     xhr.send(fileToUpload);
   });
 
