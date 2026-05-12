@@ -3,6 +3,41 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { useScheduler } from "../App.jsx";
 import Modal from "../Modal.jsx";
 
+const SORT_OPTIONS = [
+  { value: "time_asc",   label: "🕐 Mais cedo primeiro"  },
+  { value: "time_desc",  label: "🕐 Mais tarde primeiro" },
+  { value: "type",       label: "🏷 Por tipo de post"    },
+  { value: "account",    label: "👤 Por conta"           },
+  { value: "status",     label: "📊 Por status"          },
+];
+
+function sortItems(items, sortBy) {
+  const copy = [...items];
+  if (sortBy === "time_asc")  return copy.sort((a, b) => a.scheduledAt - b.scheduledAt);
+  if (sortBy === "time_desc") return copy.sort((a, b) => b.scheduledAt - a.scheduledAt);
+  if (sortBy === "type")      return copy.sort((a, b) => (a.postType || "").localeCompare(b.postType || ""));
+  if (sortBy === "account")   return copy.sort((a, b) => {
+    const ua = (a.accounts || [])[0]?.username || "";
+    const ub = (b.accounts || [])[0]?.username || "";
+    return ua.localeCompare(ub);
+  });
+  if (sortBy === "status") {
+    const ORDER = { running: 0, error: 1, pending: 2, done: 3 };
+    return copy.sort((a, b) => (ORDER[a.status] ?? 9) - (ORDER[b.status] ?? 9));
+  }
+  return copy;
+}
+
+function matchesSearch(item, q) {
+  if (!q) return true;
+  const lq = q.toLowerCase();
+  if ((item.caption || "").toLowerCase().includes(lq)) return true;
+  if ((item.mediaUrl || "").toLowerCase().includes(lq)) return true;
+  if ((item.postType || "").toLowerCase().includes(lq)) return true;
+  if ((item.accounts || []).some(a => a.username?.toLowerCase().includes(lq))) return true;
+  return false;
+}
+
 const STATUS_INFO = {
   pending: { label: "Agendado", color: "var(--info)",    bg: "rgba(56,189,248,0.08)"  },
   running: { label: "Rodando",  color: "var(--warning)", bg: "rgba(245,158,11,0.08)"  },
@@ -59,6 +94,9 @@ export default function Queue() {
   const [confirmModal, setConfirmModal] = useState(null);
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterDay,    setFilterDay]    = useState("all");
+  const [sortBy,       setSortBy]       = useState("time_asc");
+  const [search,       setSearch]       = useState("");
+  const [showSortMenu, setShowSortMenu] = useState(false);
   const [selected,     setSelected]     = useState(new Set()); // IDs selecionados
   const [selecting,    setSelecting]    = useState(false);     // modo seleção ativo
 
@@ -90,7 +128,7 @@ export default function Queue() {
     return buildDayGroups(upcoming);
   }, [mainQueue]);
 
-  // Filtro combinado: status + dia
+  // Filtro combinado: status + dia + busca + sort
   const filtered = useMemo(() => {
     let items = mainQueue;
 
@@ -106,9 +144,14 @@ export default function Queue() {
       items = items.filter((q) => q.scheduledAt >= startMs && q.scheduledAt <= endMs);
     }
 
-    // Ordenar por scheduledAt
-    return [...items].sort((a, b) => a.scheduledAt - b.scheduledAt);
-  }, [mainQueue, filterStatus, filterDay]);
+    // Busca
+    if (search.trim()) {
+      items = items.filter((q) => matchesSearch(q, search.trim()));
+    }
+
+    // Ordenação
+    return sortItems(items, sortBy);
+  }, [mainQueue, filterStatus, filterDay, search, sortBy]);
 
   // ─── Funções de seleção múltipla ──────────────────────────────────────────
   const toggleSelect = (id) => setSelected((prev) => {
