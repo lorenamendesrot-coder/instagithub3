@@ -44,38 +44,83 @@ export const handler = async (event) => {
     }
 
     // ── 2. Buscar dados básicos da conta Instagram ────────────────────────────
-    const meRes  = await fetch(`${GRAPH_IG}/me?fields=id,username,name,profile_picture_url,account_type,followers_count,media_count&access_token=${token}`);
-    const meData = await meRes.json();
+    // Tenta graph.instagram.com primeiro (tokens de dashboard/OAuth)
+    // Se falhar, tenta via graph.facebook.com (System User tokens)
+    let meData = null;
+    let tokenType = "ig"; // "ig" ou "system_user"
 
-    if (meData.error)
-      return { statusCode: 400, headers, body: JSON.stringify({ error: "Erro ao buscar conta: " + meData.error.message }) };
+    const meResIG = await fetch(`${GRAPH_IG}/me?fields=id,username,name,profile_picture_url,account_type,followers_count,media_count&access_token=${token}`);
+    const meDataIG = await meResIG.json();
 
-    if (!meData.id)
+    if (!meDataIG.error) {
+      meData = meDataIG;
+      tokenType = "ig";
+    } else {
+      // Tenta via Facebook Graph API — System User Token
+      // Precisa buscar contas Instagram vinculadas via /me/accounts ou diretamente
+      const meFBRes  = await fetch(`${GRAPH_FB}/me?fields=id,name&access_token=${token}`);
+      const meFBData = await meFBRes.json();
+
+      if (meFBData.error)
+        return { statusCode: 400, headers, body: JSON.stringify({ error: "Erro ao buscar conta: " + (meDataIG.error.message || meFBData.error.message) }) };
+
+      // Tenta 3 endpoints diferentes para System User tokens
+      let foundAccount = null;
+
+      // Tentativa 1: instagram_accounts direto no System User
+      const t1Res  = await fetch(`${GRAPH_FB}/${meFBData.id}/instagram_accounts?fields=id,username,name,profile_picture_url,account_type,followers_count,media_count&access_token=${token}`);
+      const t1Data = await t1Res.json();
+      if (!t1Data.error && t1Data.data?.[0]) foundAccount = t1Data.data[0];
+
+      // Tentativa 2: via páginas vinculadas → instagram_business_account
+      if (!foundAccount) {
+        const t2Res  = await fetch(`${GRAPH_FB}/${meFBData.id}/accounts?fields=instagram_business_account{id,username,name,profile_picture_url,account_type,followers_count,media_count}&access_token=${token}`);
+        const t2Data = await t2Res.json();
+        if (!t2Data.error && t2Data.data?.[0]?.instagram_business_account) {
+          foundAccount = t2Data.data[0].instagram_business_account;
+        }
+      }
+
+      // Tentativa 3: owned_instagram_accounts
+      if (!foundAccount) {
+        const t3Res  = await fetch(`${GRAPH_FB}/${meFBData.id}/owned_instagram_accounts?fields=id,username,name,profile_picture_url,account_type,followers_count,media_count&access_token=${token}`);
+        const t3Data = await t3Res.json();
+        if (!t3Data.error && t3Data.data?.[0]) foundAccount = t3Data.data[0];
+      }
+
+      if (!foundAccount)
+        return { statusCode: 400, headers, body: JSON.stringify({ error: "Não foi possível encontrar conta Instagram vinculada a este token. Verifique se a conta Instagram foi adicionada como ativo do usuário do sistema no Business Manager." }) };
+
+      meData = foundAccount;
+    }
+
+    if (!meData?.id)
       return { statusCode: 400, headers, body: JSON.stringify({ error: "Não foi possível obter o ID da conta. Verifique as permissões do token." }) };
 
     // ── 3. Tentar trocar por long-lived token (60 dias) ───────────────────────
-    // Tokens gerados pelo dashboard do Meta são short-lived (1h).
-    // Tentamos trocar — se falhar, usamos o original com aviso.
+    // System User tokens não expiram — não precisa trocar
+    // Tokens de dashboard são short-lived (1h) — tentar trocar
     let finalToken    = token;
-    let tokenDuration = "short-lived";
+    let tokenDuration = tokenType === "system_user" ? "never-expires" : "short-lived";
     let expiresAt     = null;
 
-    try {
-      const llRes  = await fetch(
-        `${GRAPH_IG}/access_token?grant_type=ig_exchange_token&client_secret=${APP_SECRET}&access_token=${token}`
-      );
-      const llData = await llRes.json();
+    if (tokenType !== "system_user") {
+      try {
+        const llRes  = await fetch(
+          `${GRAPH_IG}/access_token?grant_type=ig_exchange_token&client_secret=${APP_SECRET}&access_token=${token}`
+        );
+        const llData = await llRes.json();
 
-      if (llData.access_token && !llData.error) {
-        finalToken    = llData.access_token;
-        tokenDuration = "long-lived";
-        // expires_in vem em segundos
-        if (llData.expires_in) {
-          expiresAt = new Date(Date.now() + llData.expires_in * 1000).toISOString();
+        if (llData.access_token && !llData.error) {
+          finalToken    = llData.access_token;
+          tokenDuration = "long-lived";
+          if (llData.expires_in) {
+            expiresAt = new Date(Date.now() + llData.expires_in * 1000).toISOString();
+          }
         }
+      } catch {
+        // Mantém token original se troca falhar
       }
-    } catch {
-      // Se falhar a troca, continua com o token original
     }
 
     // ── 4. Montar objeto da conta ─────────────────────────────────────────────
@@ -105,6 +150,8 @@ export const handler = async (event) => {
         // Aviso se ficou como short-lived
         warning: tokenDuration === "short-lived"
           ? "Token de curta duração (1h). Adicione igualmente — o sistema tentará renovar automaticamente."
+          : tokenDuration === "never-expires"
+          ? null
           : null,
       }),
     };
