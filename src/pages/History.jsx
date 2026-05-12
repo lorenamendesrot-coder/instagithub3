@@ -35,7 +35,7 @@ function groupEntries(entries, groupBy) {
   const map = new Map();
   for (const e of entries) {
     let key;
-    if (groupBy === "day")    key = new Date(e.created_at).toDateString();
+    if (groupBy === "day")    key = new Date(e.created_at || 0).toDateString();
     if (groupBy === "type")   key = e.post_type || "OUTRO";
     if (groupBy === "source") key = e.source || (e.from_scheduler ? "schedule" : "new_post");
     if (!map.has(key)) map.set(key, []);
@@ -51,17 +51,23 @@ function groupEntries(entries, groupBy) {
   });
 }
 
+function toTs(e) {
+  // created_at é string ISO; id pode ser número ou string — usa o mais confiável
+  if (e.created_at) return new Date(e.created_at).getTime();
+  return typeof e.id === "number" ? e.id : parseInt(e.id, 10) || 0;
+}
+
 function sortEntries(entries, sortBy) {
   const copy = [...entries];
-  if (sortBy === "date_desc")    return copy.sort((a, b) => b.id - a.id);
-  if (sortBy === "date_asc")     return copy.sort((a, b) => a.id - b.id);
+  if (sortBy === "date_desc")    return copy.sort((a, b) => toTs(b) - toTs(a));
+  if (sortBy === "date_asc")     return copy.sort((a, b) => toTs(a) - toTs(b));
   if (sortBy === "type")         return copy.sort((a, b) => (a.post_type || "").localeCompare(b.post_type || ""));
   if (sortBy === "success_desc") return copy.sort((a, b) => {
     const sa = (b.results || []).filter(r => r.success).length;
     const sb = (a.results || []).filter(r => r.success).length;
     return sa - sb;
   });
-  if (sortBy === "fail_first")   return copy.sort((a, b) => {
+  if (sortBy === "fail_first") return copy.sort((a, b) => {
     const fa = (a.results || []).some(r => !r.success) ? 0 : 1;
     const fb = (b.results || []).some(r => !r.success) ? 0 : 1;
     return fa - fb;
@@ -203,8 +209,12 @@ export default function History() {
       if (filterStatus === "fail"    && ok === total) return false;
       if (search.trim()) {
         const q = search.toLowerCase();
-        if (!(e.default_caption || "").toLowerCase().includes(q) &&
-            !(e.results || []).some((r) => r.username?.toLowerCase().includes(q))) return false;
+        const inCaption  = (e.default_caption || "").toLowerCase().includes(q);
+        const inResults  = (e.results || []).some((r) => r.username?.toLowerCase().includes(q));
+        const inAccounts = (e.accounts || []).some((a) => a.username?.toLowerCase().includes(q));
+        const inPending  = (e.pending_accounts || []).some((a) => a.username?.toLowerCase().includes(q));
+        const inUrl      = (e.media_url || "").toLowerCase().includes(q);
+        if (!inCaption && !inResults && !inAccounts && !inPending && !inUrl) return false;
       }
       return true;
     });
