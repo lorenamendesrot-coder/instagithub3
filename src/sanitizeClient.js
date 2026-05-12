@@ -1,19 +1,44 @@
 // sanitizeClient.js — Sanitização de mídia no BROWSER (client-side)
-// Portado do sanitize-media.mjs (Node) para rodar com ArrayBuffer/Uint8Array
-// Técnicas: remoção EXIF/XMP/metadados, injeção de bytes aleatórios únicos
+// Técnicas: remoção EXIF/XMP/metadados + variação única por conta
+// Cada conta recebe um arquivo com fingerprint diferente:
+//   - Metadados aleatórios distintos (COM, tEXt, uuid)
+//   - Timestamps diferentes no JPEG/PNG/MP4
+//   - Ruído de 1-2 pixels em posição aleatória (JPEG/PNG)
+//   - Tamanho de arquivo ligeiramente diferente
 // Compatível com: JPEG, PNG, WebP, MP4/MOV
-// Retorna: { file: File, report: SanitizationReport }
 
 // ─── Utilitários ──────────────────────────────────────────────────────────────
 
-function randomBytes(n) {
+function randomBytes(n, seed) {
   const arr = new Uint8Array(n);
-  crypto.getRandomValues(arr);
+  if (seed == null) {
+    crypto.getRandomValues(arr);
+  } else {
+    // PRNG determinístico por seed (para variação por conta)
+    let s = seed >>> 0;
+    for (let i = 0; i < n; i++) {
+      s = Math.imul(1664525, s) + 1013904223;
+      arr[i] = (s >>> 24) & 0xFF;
+    }
+  }
   return arr;
 }
 
-function randomHex(n) {
-  return Array.from(randomBytes(n)).map(b => b.toString(16).padStart(2, "0")).join("");
+function randomHex(n, seed) {
+  return Array.from(randomBytes(n, seed))
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+// Gera seed numérica a partir de accountId (string)
+function accountSeed(accountId) {
+  if (!accountId) return Math.random() * 0xFFFFFFFF >>> 0;
+  let h = 0x811c9dc5;
+  for (let i = 0; i < accountId.length; i++) {
+    h ^= accountId.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
 }
 
 function readU16BE(buf, offset) {
@@ -48,7 +73,17 @@ function asciiBytes(str) {
 }
 
 function readAscii(buf, offset, len) {
-  return Array.from(buf.slice(offset, offset + len)).map(b => String.fromCharCode(b)).join("");
+  return Array.from(buf.slice(offset, offset + len))
+    .map(b => String.fromCharCode(b)).join("");
+}
+
+// Timestamp Unix aleatório nos últimos 2 anos (varia por conta)
+function randomTimestamp(seed) {
+  const now      = Math.floor(Date.now() / 1000);
+  const twoYears = 2 * 365 * 24 * 3600;
+  const s        = randomBytes(4, seed);
+  const offset   = readU32BE(s, 0) % twoYears;
+  return now - offset;
 }
 
 // ─── CRC32 (para PNG) ─────────────────────────────────────────────────────────
@@ -71,115 +106,170 @@ function crc32(buf) {
 
 // ─── JPEG ─────────────────────────────────────────────────────────────────────
 // Remove: APP1 (EXIF/XMP), APP2–APP15 (ICC, etc.), APP13 (IPTC)
-// Injeta: marcador COM com 16 bytes aleatórios únicos
+// Injeta por conta: marcador COM com metadados únicos + ruído de pixel
 
-function sanitizeJpeg(buf) {
+function sanitizeJpeg(buf, seed, addPixelNoise) {
   const removed = [];
   if (buf[0] !== 0xFF || buf[1] !== 0xD8) return { buf, removed: ["não é JPEG válido"] };
 
-  const out = [new Uint8Array([0xFF, 0xD8])]; // SOI
+  // Copiar buffer para permitir modificação (ruído de pixel)
+  const work = new Uint8Array(buf);
+
+  const out = [new Uint8Array([0xFF, 0xD8])];
   let i = 2;
+  let sosOffset = -1;
 
-  while (i < buf.length - 1) {
-    if (buf[i] !== 0xFF) { i++; continue; }
-    const marker = buf[i + 1];
+  while (i < work.length - 1) {
+    if (work[i] !== 0xFF) { i++; continue; }
+    const marker = work[i + 1];
 
-    // SOS — restante são dados de imagem, copia tudo
-    if (marker === 0xDA) { out.push(buf.slice(i)); break; }
-    // EOI
+    if (marker === 0xDA) {
+      sosOffset = i;
+      out.push(work.slice(i));
+      break;
+    }
     if (marker === 0xD9) { out.push(new Uint8Array([0xFF, 0xD9])); break; }
-    // Marcadores sem comprimento
-    if ((marker >= 0xD0 && marker <= 0xD7) || marker === 0xD8) { out.push(buf.slice(i, i + 2)); i += 2; continue; }
+    if ((marker >= 0xD0 && marker <= 0xD7) || marker === 0xD8) {
+      out.push(work.slice(i, i + 2)); i += 2; continue;
+    }
 
-    if (i + 3 >= buf.length) break;
-    const segLen = readU16BE(buf, i + 2);
+    if (i + 3 >= work.length) break;
+    const segLen = readU16BE(work, i + 2);
     const segEnd = i + 2 + segLen;
 
-    const isApp1  = marker === 0xE1; // EXIF / XMP
-    const isApp13 = marker === 0xED; // IPTC
-    const isApp2to15 = marker >= 0xE2 && marker <= 0xEF; // ICC, etc.
+    const isApp1     = marker === 0xE1;
+    const isApp13    = marker === 0xED;
+    const isApp2to15 = marker >= 0xE2 && marker <= 0xEF;
 
-    if (isApp1)  { removed.push("EXIF/XMP (APP1)"); i = segEnd; continue; }
-    if (isApp13) { removed.push("IPTC (APP13)");    i = segEnd; continue; }
-    if (isApp2to15) { removed.push(`APP${marker - 0xE0}`); i = segEnd; continue; }
+    if (isApp1)      { removed.push("EXIF/XMP (APP1)"); i = segEnd; continue; }
+    if (isApp13)     { removed.push("IPTC (APP13)");    i = segEnd; continue; }
+    if (isApp2to15)  { removed.push(`APP${marker - 0xE0}`); i = segEnd; continue; }
 
-    out.push(buf.slice(i, segEnd));
+    out.push(work.slice(i, segEnd));
     i = segEnd;
   }
 
-  // Injeta marcador COM com 16 bytes aleatórios
-  const rnd = randomBytes(16);
-  const com = new Uint8Array(4 + 16);
+  // ── Injetar marcador COM com metadados únicos por conta ─────────────────
+  // Contém: hash único + timestamp + seed da conta (cada conta tem valores diferentes)
+  const ts       = randomTimestamp(seed);
+  const hashBytes = randomBytes(12, seed ^ 0xDEAD);
+  const comData  = new Uint8Array(20);
+  comData.set(hashBytes, 0);
+  writeU32BE(comData, 12, ts);
+  comData.set(randomBytes(4, seed ^ 0xBEEF), 16);
+
+  const com = new Uint8Array(4 + 20);
   com[0] = 0xFF; com[1] = 0xFE;
-  com[2] = 0; com[3] = 18; // length = 2 + 16
-  com.set(rnd, 4);
+  com[2] = 0; com[3] = 22; // length = 2 + 20
+  com.set(comData, 4);
   out.splice(1, 0, com);
-  removed.push("injeção COM com hash único");
+  removed.push(`injeção COM único (ts:${ts}, hash:${randomHex(4, seed)})`);
+
+  // ── Ruído de 1-3 pixels em posição pseudoaleatória (via seed da conta) ──
+  // Apenas se o SOS foi encontrado e addPixelNoise está habilitado
+  if (addPixelNoise && sosOffset > 0) {
+    const assembled = concatUint8Arrays(out);
+    // Encontrar posição do SOS no buffer assembado
+    const noiseSeed = seed ^ 0xCAFE;
+    const noiseBytes = randomBytes(6, noiseSeed);
+    // Modificar 2-4 bytes na região de dados (após o SOS header, que tem ~12 bytes)
+    const sosInAssembled = assembled.findIndex((_, idx, arr) =>
+      idx > 0 && arr[idx-1] === 0xFF && arr[idx] === 0xDA
+    );
+    if (sosInAssembled > 0) {
+      const dataStart = sosInAssembled + 12;
+      const dataEnd   = assembled.length - 2;
+      if (dataEnd > dataStart + 100) {
+        const range  = dataEnd - dataStart - 10;
+        const pos1   = dataStart + (readU32BE(noiseBytes, 0) % range);
+        const pos2   = dataStart + (readU32BE(noiseBytes, 2) % range);
+        // XOR com valor não-zero pequeno (±1 no valor do byte)
+        assembled[pos1] ^= (noiseBytes[4] & 0x03) + 1;
+        assembled[pos2] ^= (noiseBytes[5] & 0x03) + 1;
+        removed.push("ruído de pixel (2 bytes variados)");
+      }
+    }
+    return { buf: assembled, removed };
+  }
 
   return { buf: concatUint8Arrays(out), removed };
 }
 
 // ─── PNG ──────────────────────────────────────────────────────────────────────
 // Remove: tEXt, iTXt, zTXt, eXIf, iCCP, tIME
-// Injeta: chunk tEXt com bytes aleatórios
+// Injeta por conta: chunk tEXt com metadados únicos + chunk tIME com timestamp variável
 
 const PNG_SIG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 const PNG_DROP_CHUNKS = new Set(["tEXt", "iTXt", "zTXt", "eXIf", "iCCP", "tIME"]);
 
-function sanitizePng(buf) {
+function makePngChunk(type, data) {
+  const typeArr = asciiBytes(type);
+  const lenBuf  = new Uint8Array(4);
+  writeU32BE(lenBuf, 0, data.length);
+  const crcInput = concatUint8Arrays([typeArr, data]);
+  const crcVal   = crc32(crcInput);
+  const crcBuf   = new Uint8Array(4);
+  writeU32BE(crcBuf, 0, crcVal);
+  return concatUint8Arrays([lenBuf, typeArr, data, crcBuf]);
+}
+
+function sanitizePng(buf, seed) {
   const removed = [];
   for (let s = 0; s < 8; s++) {
     if (buf[s] !== PNG_SIG[s]) return { buf, removed: ["não é PNG válido"] };
   }
 
-  const out = [buf.slice(0, 8)]; // PNG signature
+  const out = [buf.slice(0, 8)];
   let i = 8;
 
   while (i < buf.length) {
     if (i + 8 > buf.length) break;
-    const len  = readU32BE(buf, i);
-    const type = readAscii(buf, i + 4, 4);
-    const total = 4 + 4 + len + 4; // length + type + data + crc
-
+    const len   = readU32BE(buf, i);
+    const type  = readAscii(buf, i + 4, 4);
+    const total = 4 + 4 + len + 4;
     if (PNG_DROP_CHUNKS.has(type)) { removed.push(type); i += total; continue; }
     out.push(buf.slice(i, i + total));
     i += total;
   }
 
-  // Injeta chunk tEXt com "Comment\0" + 16 bytes aleatórios
+  // tEXt com metadados únicos por conta
   const key     = asciiBytes("Comment\0");
-  const val     = randomBytes(16);
-  const data    = concatUint8Arrays([key, val]);
-  const typeArr = asciiBytes("tEXt");
-  const lenBuf  = new Uint8Array(4);
-  writeU32BE(lenBuf, 0, data.length);
+  const val     = randomBytes(20, seed);            // 20 bytes únicos por conta
+  const txtData = concatUint8Arrays([key, val]);
+  out.splice(out.length - 1, 0, makePngChunk("tEXt", txtData));
+  removed.push(`injeção tEXt único (${randomHex(4, seed)})`);
 
-  const crcInput = concatUint8Arrays([typeArr, data]);
-  const crcVal   = crc32(crcInput);
-  const crcBuf   = new Uint8Array(4);
-  writeU32BE(crcBuf, 0, crcVal);
-
-  const chunk = concatUint8Arrays([lenBuf, typeArr, data, crcBuf]);
-  // Insere antes do IEND
-  out.splice(out.length - 1, 0, chunk);
-  removed.push("injeção tEXt com hash único");
+  // tIME com timestamp único por conta
+  const ts = randomTimestamp(seed ^ 0xF00D);
+  const d  = new Date(ts * 1000);
+  const timeData = new Uint8Array(7);
+  const yr = d.getUTCFullYear();
+  timeData[0] = (yr >> 8) & 0xFF;
+  timeData[1] = yr & 0xFF;
+  timeData[2] = d.getUTCMonth() + 1;
+  timeData[3] = d.getUTCDate();
+  timeData[4] = d.getUTCHours();
+  timeData[5] = d.getUTCMinutes();
+  timeData[6] = d.getUTCSeconds();
+  out.splice(out.length - 1, 0, makePngChunk("tIME", timeData));
+  removed.push("tIME com timestamp variável por conta");
 
   return { buf: concatUint8Arrays(out), removed };
 }
 
 // ─── WebP ─────────────────────────────────────────────────────────────────────
 // Remove: EXIF, XMP_
-// Injeta: chunk UNKN com bytes aleatórios
+// Injeta por conta: chunk UNKN com dados únicos
 
 const WEBP_DROP_CHUNKS = new Set(["EXIF", "XMP "]);
 
-function sanitizeWebp(buf) {
+function sanitizeWebp(buf, seed) {
   const removed = [];
   const riff = readAscii(buf, 0, 4);
   const webp = readAscii(buf, 8, 4);
   if (riff !== "RIFF" || webp !== "WEBP") return { buf, removed: ["não é WebP válido"] };
 
-  const out = [buf.slice(0, 12)]; // RIFF header
+  const out = [buf.slice(0, 12)];
   let i = 12;
 
   while (i < buf.length) {
@@ -192,19 +282,16 @@ function sanitizeWebp(buf) {
     i += total;
   }
 
-  // Injeta chunk UNKN com 16 bytes aleatórios
-  const rnd = randomBytes(16);
-  const unkn = new Uint8Array(8 + 16);
+  // Chunk UNKN com 20 bytes únicos por conta
+  const rnd  = randomBytes(20, seed);
+  const unkn = new Uint8Array(8 + 20);
   unkn.set(asciiBytes("UNKN"), 0);
-  unkn[4] = 16; unkn[5] = 0; unkn[6] = 0; unkn[7] = 0; // size LE
+  unkn[4] = 20; unkn[5] = 0; unkn[6] = 0; unkn[7] = 0;
   unkn.set(rnd, 8);
   out.push(unkn);
-  removed.push("injeção UNKN com hash único");
+  removed.push(`injeção UNKN único (${randomHex(4, seed)})`);
 
-  // Recalcular tamanho RIFF
   const result = concatUint8Arrays(out);
-  writeU32BE(result, 4, result.length - 8); // não é LE aqui? WebP usa LE
-  // WebP RIFF size é LE — corrigir
   const totalSize = result.length - 8;
   result[4] =  totalSize        & 0xFF;
   result[5] = (totalSize >> 8)  & 0xFF;
@@ -215,68 +302,54 @@ function sanitizeWebp(buf) {
 }
 
 // ─── MP4 / MOV ────────────────────────────────────────────────────────────────
-// Remove atoms de metadados: udta, meta, ©nam, ©art, ©day, ©too, etc.
-// Injeta: atom "uuid" com 16 bytes aleatórios no nível raiz
+// Apenas variações seguras: timestamps no mvhd + atom uuid único por conta
+// NÃO remove atoms do moov — corrompe o bitstream
 
-const MP4_META_ATOMS = new Set(["udta", "meta", "©nam", "©art", "©day", "©too", "©cmt", "©alb", "©gen", "desc", "cprt", "free"]);
 const MP4_CONTAINERS = new Set(["moov", "trak", "mdia", "minf", "stbl", "ilst"]);
 
-function sanitizeMp4(buf) {
+function varyMp4(buf, seed) {
   const removed = [];
+  const work    = new Uint8Array(buf);
 
-  // Percorre os atoms do nível raiz e dos containers
-  function processAtoms(src, depth = 0) {
-    const chunks = [];
-    let i = 0;
-
-    while (i < src.length) {
-      if (i + 8 > src.length) { chunks.push(src.slice(i)); break; }
-
-      let size = readU32BE(src, i);
-      if (size === 0) { chunks.push(src.slice(i)); break; } // atom vai até EOF
-      if (size < 8 || i + size > src.length + 4) { chunks.push(src.slice(i)); break; }
-
-      const type = readAscii(src, i + 4, 4);
-
-      if (depth === 0 && MP4_META_ATOMS.has(type)) {
-        removed.push(type);
-        i += size;
-        continue;
-      }
-
-      if (MP4_CONTAINERS.has(type) && size > 8) {
-        // Processa recursivamente o interior do container
-        const inner    = src.slice(i + 8, i + size);
-        const cleaned  = processAtoms(inner, depth + 1);
-        const newSize  = 8 + cleaned.length;
-        const header   = new Uint8Array(8);
-        writeU32BE(header, 0, newSize);
-        header.set(asciiBytes(type), 4);
-        chunks.push(concatUint8Arrays([header, cleaned]));
-        i += size;
-        continue;
-      }
-
-      chunks.push(src.slice(i, i + size));
-      i += size;
+  // Variar timestamps no mvhd (creation_time e modification_time são u32 em offset 8 e 12)
+  let i = 0;
+  while (i < work.length - 8) {
+    if (readAscii(work, i + 4, 4) === "mvhd" && i + 20 < work.length) {
+      const ts = randomTimestamp(seed ^ 0xA5A5);
+      writeU32BE(work, i + 8,  ts);           // creation_time
+      writeU32BE(work, i + 12, ts + (readU32BE(randomBytes(4, seed), 0) % 3600));
+      removed.push(`mvhd timestamps variados (${ts})`);
+      break;
     }
-
-    return concatUint8Arrays(chunks);
+    const size = readU32BE(work, i);
+    if (size < 8) break;
+    i += size;
   }
 
-  const cleaned = processAtoms(buf);
+  // Injetar atom "free" com 20 bytes únicos por conta logo após o ftyp
+  // "free" é ignorado por todos os players — seguro
+  let insertAt = 0;
+  i = 0;
+  while (i < work.length - 8) {
+    const size = readU32BE(work, i);
+    const type = readAscii(work, i + 4, 4);
+    if (size < 8) break;
+    if (type === "ftyp") { insertAt = i + size; break; }
+    i += size;
+  }
 
-  // Injeta atom "uuid" com 16 bytes aleatórios no final (antes do mdat ou no fim)
-  const rnd = randomBytes(16);
-  const uuidAtom = new Uint8Array(8 + 16);
-  writeU32BE(uuidAtom, 0, 24); // size
-  uuidAtom.set(asciiBytes("uuid"), 4);
-  uuidAtom.set(rnd, 8);
+  const freeData = randomBytes(20, seed ^ 0x1234);
+  const freeAtom = new Uint8Array(8 + 20);
+  writeU32BE(freeAtom, 0, 28);
+  freeAtom.set(asciiBytes("free"), 4);
+  freeAtom.set(freeData, 8);
+  removed.push(`injeção atom free único (${randomHex(4, seed)})`);
 
-  removed.push("injeção uuid com hash único");
-
+  // Inserir após ftyp
+  const before = work.slice(0, insertAt);
+  const after  = work.slice(insertAt);
   return {
-    buf: concatUint8Arrays([cleaned, uuidAtom]),
+    buf: concatUint8Arrays([before, freeAtom, after]),
     removed,
   };
 }
@@ -287,21 +360,16 @@ function detectFormat(buf, mimeType) {
   if (buf[0] === 0xFF && buf[1] === 0xD8) return "jpeg";
   if (buf[0] === 137  && buf[1] === 80)  return "png";
   if (readAscii(buf, 0, 4) === "RIFF" && readAscii(buf, 8, 4) === "WEBP") return "webp";
-
-  // ftyp atom em MP4/MOV
   if (buf.length > 12) {
     const ftyp = readAscii(buf, 4, 4);
     if (ftyp === "ftyp" || ftyp === "moov" || ftyp === "mdat") return "mp4";
   }
-
-  // Fallback por mime type
-  if (mimeType?.includes("jpeg"))     return "jpeg";
-  if (mimeType?.includes("png"))      return "png";
-  if (mimeType?.includes("webp"))     return "webp";
-  if (mimeType?.includes("mp4"))      return "mp4";
-  if (mimeType?.includes("quicktime"))return "mp4";
-  if (mimeType?.includes("video"))    return "mp4";
-
+  if (mimeType?.includes("jpeg"))      return "jpeg";
+  if (mimeType?.includes("png"))       return "png";
+  if (mimeType?.includes("webp"))      return "webp";
+  if (mimeType?.includes("mp4"))       return "mp4";
+  if (mimeType?.includes("quicktime")) return "mp4";
+  if (mimeType?.includes("video"))     return "mp4";
   return "unknown";
 }
 
@@ -309,44 +377,53 @@ function detectFormat(buf, mimeType) {
 
 /**
  * Sanitiza um File no browser.
- * Retorna um novo File com os metadados removidos e bytes únicos injetados,
- * junto com um relatório detalhado do que foi feito.
- *
- * @param {File} file
+ * @param {File} file — arquivo original
+ * @param {string} [accountId] — ID da conta (gera fingerprint único por conta)
  * @returns {Promise<{ file: File, report: object }>}
  */
-export async function sanitizeFile(file) {
+export async function sanitizeFile(file, accountId) {
   const startMs  = performance.now();
   const arrayBuf = await file.arrayBuffer();
   const original = new Uint8Array(arrayBuf);
-  const uniqueId = randomHex(8); // ID único por arquivo sanitizado
 
-  const format = detectFormat(original, file.type);
-  let result   = { buf: original, removed: [] };
+  // Seed única por arquivo+conta — garante que o mesmo arquivo tenha fingerprints
+  // diferentes quando enviado para contas diferentes
+  const fileSeed    = accountSeed(file.name + file.size);
+  const accSeed     = accountSeed(accountId || "");
+  const combinedSeed = (fileSeed ^ accSeed ^ Date.now()) >>> 0;
 
-  if (format === "jpeg") result = sanitizeJpeg(original);
-  else if (format === "png")  result = sanitizePng(original);
-  else if (format === "webp") result = sanitizeWebp(original);
-  // MP4: sanitizeMp4 desativado — modificar atoms do moov corrompe o arquivo
-  // else if (format === "mp4")  result = sanitizeMp4(original);
-  // outros formatos: retorna sem modificação mas documenta
+  const uniqueId = randomHex(8, combinedSeed);
+  const format   = detectFormat(original, file.type);
+
+  let result = { buf: original, removed: [] };
+
+  if      (format === "jpeg") result = sanitizeJpeg(original, combinedSeed, true);
+  else if (format === "png")  result = sanitizePng(original, combinedSeed);
+  else if (format === "webp") result = sanitizeWebp(original, combinedSeed);
+  else if (format === "mp4")  result = varyMp4(original, combinedSeed);
+  // outros formatos: retorna sem modificação
 
   const durationMs = Math.round(performance.now() - startMs);
   const sizeDiff   = result.buf.length - original.length;
 
-  // Gera novo nome com sufixo único para evitar hash igual
+  // Nome único por conta+arquivo
   const ext      = file.name.split(".").pop();
   const baseName = file.name.replace(/\.[^.]+$/, "");
   const newName  = `${baseName}_s${uniqueId}.${ext}`;
 
-  // Cria novo File com o buffer sanitizado
-  const sanitized = new File([result.buf], newName, { type: file.type, lastModified: Date.now() });
+  const sanitized = new File(
+    [result.buf],
+    newName,
+    { type: file.type, lastModified: Date.now() - (combinedSeed % 86_400_000) }
+    // lastModified também varia por conta — mais um fingerprint diferente
+  );
 
   const report = {
     originalName:  file.name,
     sanitizedName: newName,
     format,
     uniqueId,
+    accountId:     accountId || null,
     originalSize:  original.length,
     sanitizedSize: result.buf.length,
     sizeDiff,
@@ -360,6 +437,23 @@ export async function sanitizeFile(file) {
 }
 
 /**
+ * Sanitiza o mesmo arquivo para múltiplas contas.
+ * Cada conta recebe uma variação diferente do arquivo.
+ *
+ * @param {File} file
+ * @param {string[]} accountIds
+ * @returns {Promise<Array<{ accountId, file, report }>>}
+ */
+export async function sanitizeFileForAccounts(file, accountIds) {
+  return Promise.all(
+    accountIds.map(async (accountId) => {
+      const { file: sanitized, report } = await sanitizeFile(file, accountId);
+      return { accountId, file: sanitized, report };
+    })
+  );
+}
+
+/**
  * Retorna um resumo legível do relatório de sanitização
  */
 export function formatReport(report) {
@@ -367,9 +461,10 @@ export function formatReport(report) {
   const lines = [
     `Formato: ${report.format.toUpperCase()}`,
     `ID único: ${report.uniqueId}`,
+    report.accountId ? `Conta: ${report.accountId}` : null,
     `Tamanho: ${(report.originalSize / 1024).toFixed(0)} KB → ${(report.sanitizedSize / 1024).toFixed(0)} KB (${report.sizeDiff >= 0 ? "+" : ""}${report.sizeDiff}B)`,
     `Removido/injetado: ${report.removed.join(", ") || "nenhum"}`,
     `Tempo: ${report.durationMs}ms`,
-  ];
+  ].filter(Boolean);
   return lines.join("\n");
 }
