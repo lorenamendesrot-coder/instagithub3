@@ -144,6 +144,36 @@ export function timeToMs(dateBase, timeStr) {
   return d.getTime();
 }
 
+// ─── Gera slots por meta (quantidade em período) ──────────────────────────────
+// Ex: 10 reels em 1h → calcula intervalo ideal com jitter para caber tudo
+export function generateSlotsByTarget({ dayBase, count, periodHours, windowStart: ws, windowEnd: we }) {
+  const windowStart = timeToMs(dayBase, ws);
+  const windowEnd   = timeToMs(dayBase, we);
+  const windowMs    = windowEnd - windowStart;
+
+  // Período alvo em ms — não pode ultrapassar a janela disponível
+  const periodMs    = Math.min(periodHours * 3600000, windowMs);
+
+  if (count <= 0 || periodMs <= 0) return [];
+
+  // Intervalo base = período / (count - 1) ou período / count se só 1
+  const baseInterval = count > 1 ? periodMs / (count - 1) : periodMs;
+
+  // Jitter de ±20% do intervalo (mínimo 10s, máximo 5min)
+  const jitterAmp = Math.min(300000, Math.max(10000, baseInterval * 0.2));
+
+  const times = [];
+  for (let i = 0; i < count; i++) {
+    const base    = windowStart + i * baseInterval;
+    const jitter  = (Math.random() * 2 - 1) * jitterAmp;
+    const seconds = Math.floor(Math.random() * 59);
+    const t       = new Date(Math.min(Math.max(base + jitter, windowStart), windowEnd));
+    t.setSeconds(seconds);
+    times.push(t);
+  }
+  return times;
+}
+
 export function generateSlotTimes(dayBase, count, plan) {
   const windowStart = timeToMs(dayBase, plan.windowStart);
   const windowEnd   = timeToMs(dayBase, plan.windowEnd);
@@ -214,7 +244,16 @@ export function buildWarmupQueue({ accounts, mediaByType, captions, captionMode,
       if (!pool.length || !count) return;
 
       accounts.forEach((acc, accIdx) => {
-        const times = generateSlotTimes(dayBase, count, dayPlan);
+        // Modo target: quantidade em período definido
+        const times = dayPlan.targetMode && dayPlan.targetCount && dayPlan.targetPeriodHours
+          ? generateSlotsByTarget({
+              dayBase,
+              count:       dayPlan.targetCount,
+              periodHours: dayPlan.targetPeriodHours,
+              windowStart: dayPlan.windowStart,
+              windowEnd:   dayPlan.windowEnd,
+            })
+          : generateSlotTimes(dayBase, count, dayPlan);
         times.forEach((scheduledDate, k) => {
           const mediaIdx = distribution === "random"
             ? Math.floor(Math.random() * pool.length)
