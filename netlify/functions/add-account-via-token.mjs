@@ -1,25 +1,8 @@
 // add-account-via-token.mjs
-// Adiciona conta Instagram via Access Token direto (gerado no Meta Developers)
-// Fluxo: valida token → busca conta IG → troca por long-lived (60 dias)
-
 const GRAPH_IG = "https://graph.instagram.com";
 const GRAPH_FB = "https://graph.facebook.com/v21.0";
 
 const igFields = "id,username,name,profile_picture_url,account_type,followers_count,media_count";
-
-// Busca todas as páginas de uma resposta paginada da Graph API
-async function fetchAllPages(url) {
-  const results = [];
-  let next = url;
-  while (next) {
-    const res  = await fetch(next);
-    const data = await res.json();
-    if (data.error || !data.data) break;
-    results.push(...data.data);
-    next = data.paging?.next || null;
-  }
-  return results;
-}
 
 export const handler = async (event) => {
   const headers = { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" };
@@ -32,7 +15,7 @@ export const handler = async (event) => {
   const APP_SECRET = process.env.META_APP_SECRET;
 
   if (!APP_ID || !APP_SECRET)
-    return { statusCode: 500, headers, body: JSON.stringify({ error: "Configuração do app ausente (META_APP_ID / META_APP_SECRET)" }) };
+    return { statusCode: 500, headers, body: JSON.stringify({ error: "Configuração do app ausente" }) };
 
   let body;
   try { body = JSON.parse(event.body || "{}"); }
@@ -43,180 +26,139 @@ export const handler = async (event) => {
     return { statusCode: 400, headers, body: JSON.stringify({ error: "access_token é obrigatório" }) };
 
   const token = access_token.trim();
+  const diag  = {}; // objeto de diagnóstico — retornado junto ao erro
 
   try {
-    // ── 1. Validar token via debug_token ──────────────────────────────────────
-    let debugInfo = null;
+    // ── 1. debug_token ────────────────────────────────────────────────────────
     try {
-      const debugRes  = await fetch(`${GRAPH_FB}/debug_token?input_token=${token}&access_token=${APP_ID}|${APP_SECRET}`);
-      const debugData = await debugRes.json();
-      if (debugData.data) {
-        if (!debugData.data.is_valid) {
-          const reason = debugData.data.error?.message || "Token expirado ou revogado";
-          return { statusCode: 401, headers, body: JSON.stringify({ error: "Token inválido: " + reason }) };
-        }
-        debugInfo = debugData.data;
-      }
-    } catch { /* ignora falha no debug_token */ }
+      const r = await fetch(`${GRAPH_FB}/debug_token?input_token=${token}&access_token=${APP_ID}|${APP_SECRET}`);
+      const d = await r.json();
+      diag.debug_token = { app_id: d.data?.app_id, type: d.data?.type, is_valid: d.data?.is_valid, scopes: d.data?.scopes, error: d.data?.error?.message };
+      if (d.data && !d.data.is_valid)
+        return { statusCode: 401, headers, body: JSON.stringify({ error: "Token inválido: " + (d.data.error?.message || "expirado/revogado"), diag }) };
+    } catch (e) { diag.debug_token = { exception: e.message }; }
 
-    // ── 2. Tentar graph.instagram.com/me (token nativo IG / OAuth) ────────────
-    const meResIG  = await fetch(`${GRAPH_IG}/me?fields=${igFields}&access_token=${token}`);
-    const meDataIG = await meResIG.json();
+    // ── 2. graph.instagram.com/me ─────────────────────────────────────────────
+    const igMeR = await fetch(`${GRAPH_IG}/me?fields=${igFields}&access_token=${token}`);
+    const igMe  = await igMeR.json();
+    diag.ig_me  = igMe.error ? { error: igMe.error.message, code: igMe.error.code } : { id: igMe.id, username: igMe.username };
 
-    if (!meDataIG.error) {
-      // Token IG nativo — trocar por long-lived e retornar
-      return await buildResponse({ headers, meData: meDataIG, token, tokenType: "ig", APP_SECRET });
-    }
+    if (!igMe.error)
+      return buildOk({ headers, meData: igMe, token, tokenType: "ig", APP_SECRET });
 
-    // ── 3. Identificar o usuário via Facebook Graph API ───────────────────────
-    const meFBRes  = await fetch(`${GRAPH_FB}/me?fields=id,name&access_token=${token}`);
-    const meFBData = await meFBRes.json();
+    // ── 3. FB /me ─────────────────────────────────────────────────────────────
+    const fbMeR = await fetch(`${GRAPH_FB}/me?fields=id,name&access_token=${token}`);
+    const fbMe  = await fbMeR.json();
+    diag.fb_me  = fbMe.error ? { error: fbMe.error.message } : { id: fbMe.id, name: fbMe.name };
 
-    if (meFBData.error) {
-      return { statusCode: 400, headers, body: JSON.stringify({
-        error: "Token inválido ou sem permissões: " + (meDataIG.error?.message || meFBData.error?.message),
-      }) };
-    }
+    if (fbMe.error)
+      return { statusCode: 400, headers, body: JSON.stringify({ error: "Token sem acesso à Graph API: " + fbMe.error.message, diag }) };
 
-    const userId = meFBData.id;
-    let foundAccount = null;
+    const uid = fbMe.id;
 
-    // ── 4. ESTRATÉGIA A: token de usuário comum (User Access Token) ───────────
-    // Busca páginas do usuário → instagram_business_account em cada página
-    {
-      const pagesRes  = await fetch(`${GRAPH_FB}/${userId}/accounts?fields=instagram_business_account{${igFields}}&limit=100&access_token=${token}`);
-      const pagesData = await pagesRes.json();
-      if (!pagesData.error && pagesData.data?.length) {
-        for (const page of pagesData.data) {
-          if (page.instagram_business_account) {
-            foundAccount = page.instagram_business_account;
-            break;
-          }
-        }
-      }
-    }
+    // ── 4. /accounts (páginas do usuário) ─────────────────────────────────────
+    const acR = await fetch(`${GRAPH_FB}/${uid}/accounts?fields=id,name,instagram_business_account{${igFields}}&limit=100&access_token=${token}`);
+    const acD = await acR.json();
+    diag.user_accounts = acD.error ? { error: acD.error.message } : { count: acD.data?.length, pages: acD.data?.map(p => ({ id: p.id, name: p.name, has_ig: !!p.instagram_business_account })) };
+    if (!acD.error) for (const p of acD.data || []) if (p.instagram_business_account) return buildOk({ headers, meData: p.instagram_business_account, token, tokenType: "system_user", APP_SECRET });
 
-    // ── 5. ESTRATÉGIA B: System User Token — busca via Business Manager ───────
-    // O system user token precisa buscar o business_id primeiro,
-    // depois listar as contas IG do negócio
-    if (!foundAccount) {
-      // 5a. Descobrir os negócios associados ao token
-      const bizRes  = await fetch(`${GRAPH_FB}/me/businesses?fields=id,name&access_token=${token}`);
-      const bizData = await bizRes.json();
+    // ── 5. /me/businesses ─────────────────────────────────────────────────────
+    const bizR = await fetch(`${GRAPH_FB}/me/businesses?fields=id,name&access_token=${token}`);
+    const bizD = await bizR.json();
+    diag.businesses = bizD.error ? { error: bizD.error.message } : { count: bizD.data?.length, list: bizD.data?.map(b => ({ id: b.id, name: b.name })) };
 
-      if (!bizData.error && bizData.data?.length) {
-        for (const biz of bizData.data) {
-          if (foundAccount) break;
+    if (!bizD.error && bizD.data?.length) {
+      for (const biz of bizD.data) {
+        // 5a. owned instagram_accounts do negócio
+        const oR = await fetch(`${GRAPH_FB}/${biz.id}/instagram_accounts?fields=${igFields}&limit=100&access_token=${token}`);
+        const oD = await oR.json();
+        diag[`biz_${biz.id}_instagram_accounts`] = oD.error ? { error: oD.error.message } : { count: oD.data?.length, accounts: oD.data?.map(a => a.username) };
+        if (!oD.error && oD.data?.[0]) return buildOk({ headers, meData: oD.data[0], token, tokenType: "system_user", APP_SECRET });
 
-          // 5b. Listar contas IG pertencentes ao negócio (owned)
-          const ownedRes  = await fetch(`${GRAPH_FB}/${biz.id}/instagram_accounts?fields=${igFields}&limit=100&access_token=${token}`);
-          const ownedData = await ownedRes.json();
-          if (!ownedData.error && ownedData.data?.[0]) {
-            foundAccount = ownedData.data[0];
-            break;
-          }
+        // 5b. client_instagram_accounts
+        const cR = await fetch(`${GRAPH_FB}/${biz.id}/client_instagram_accounts?fields=${igFields}&limit=100&access_token=${token}`);
+        const cD = await cR.json();
+        diag[`biz_${biz.id}_client_ig`] = cD.error ? { error: cD.error.message } : { count: cD.data?.length, accounts: cD.data?.map(a => a.username) };
+        if (!cD.error && cD.data?.[0]) return buildOk({ headers, meData: cD.data[0], token, tokenType: "system_user", APP_SECRET });
 
-          // 5c. Contas IG de clientes do negócio (client assets)
-          const clientRes  = await fetch(`${GRAPH_FB}/${biz.id}/client_instagram_accounts?fields=${igFields}&limit=100&access_token=${token}`);
-          const clientData = await clientRes.json();
-          if (!clientData.error && clientData.data?.[0]) {
-            foundAccount = clientData.data[0];
-            break;
-          }
-        }
+        // 5c. owned_instagram_accounts do negócio
+        const ooR = await fetch(`${GRAPH_FB}/${biz.id}/owned_instagram_accounts?fields=${igFields}&limit=100&access_token=${token}`);
+        const ooD = await ooR.json();
+        diag[`biz_${biz.id}_owned_ig`] = ooD.error ? { error: ooD.error.message } : { count: ooD.data?.length, accounts: ooD.data?.map(a => a.username) };
+        if (!ooD.error && ooD.data?.[0]) return buildOk({ headers, meData: ooD.data[0], token, tokenType: "system_user", APP_SECRET });
       }
     }
 
-    // ── 6. ESTRATÉGIA C: System User — assigned_pages ─────────────────────────
-    // Busca páginas atribuídas ao system user → instagram_business_account
-    if (!foundAccount) {
-      const assignedRes  = await fetch(`${GRAPH_FB}/${userId}/assigned_pages?fields=instagram_business_account{${igFields}}&limit=100&access_token=${token}`);
-      const assignedData = await assignedRes.json();
-      if (!assignedData.error && assignedData.data?.length) {
-        for (const page of assignedData.data) {
-          if (page.instagram_business_account) {
-            foundAccount = page.instagram_business_account;
-            break;
-          }
-        }
-      }
-    }
+    // ── 6. assigned_pages do system user ──────────────────────────────────────
+    const apR = await fetch(`${GRAPH_FB}/${uid}/assigned_pages?fields=id,name,instagram_business_account{${igFields}}&limit=100&access_token=${token}`);
+    const apD = await apR.json();
+    diag.assigned_pages = apD.error ? { error: apD.error.message } : { count: apD.data?.length };
+    if (!apD.error) for (const p of apD.data || []) if (p.instagram_business_account) return buildOk({ headers, meData: p.instagram_business_account, token, tokenType: "system_user", APP_SECRET });
 
-    // ── 7. ESTRATÉGIA D: owned_instagram_accounts direto no user ─────────────
-    if (!foundAccount) {
-      const ownedRes  = await fetch(`${GRAPH_FB}/${userId}/owned_instagram_accounts?fields=${igFields}&limit=100&access_token=${token}`);
-      const ownedData = await ownedRes.json();
-      if (!ownedData.error && ownedData.data?.[0]) foundAccount = ownedData.data[0];
-    }
+    // ── 7. owned_instagram_accounts direto no user ────────────────────────────
+    const ouR = await fetch(`${GRAPH_FB}/${uid}/owned_instagram_accounts?fields=${igFields}&limit=100&access_token=${token}`);
+    const ouD = await ouR.json();
+    diag.owned_ig_user = ouD.error ? { error: ouD.error.message } : { count: ouD.data?.length, accounts: ouD.data?.map(a => a.username) };
+    if (!ouD.error && ouD.data?.[0]) return buildOk({ headers, meData: ouD.data[0], token, tokenType: "system_user", APP_SECRET });
 
-    // ── 8. ESTRATÉGIA E: instagram_accounts direto no user ───────────────────
-    if (!foundAccount) {
-      const igAccRes  = await fetch(`${GRAPH_FB}/${userId}/instagram_accounts?fields=${igFields}&limit=100&access_token=${token}`);
-      const igAccData = await igAccRes.json();
-      if (!igAccData.error && igAccData.data?.[0]) foundAccount = igAccData.data[0];
-    }
+    // ── 8. instagram_accounts direto no user ──────────────────────────────────
+    const iuR = await fetch(`${GRAPH_FB}/${uid}/instagram_accounts?fields=${igFields}&limit=100&access_token=${token}`);
+    const iuD = await iuR.json();
+    diag.ig_accounts_user = iuD.error ? { error: iuD.error.message } : { count: iuD.data?.length, accounts: iuD.data?.map(a => a.username) };
+    if (!iuD.error && iuD.data?.[0]) return buildOk({ headers, meData: iuD.data[0], token, tokenType: "system_user", APP_SECRET });
 
-    if (!foundAccount) {
-      return { statusCode: 400, headers, body: JSON.stringify({
-        error: "Não foi possível encontrar a conta Instagram vinculada a este token.\n\nVerifique:\n• A conta Instagram está adicionada como ativo do usuário do sistema no Business Manager\n• O token tem as permissões: instagram_basic, instagram_content_publish, pages_read_engagement\n• O app está instalado no usuário do sistema (aba 'Apps instalados')",
-      }) };
-    }
-
-    return await buildResponse({ headers, meData: foundAccount, token, tokenType: "system_user", APP_SECRET });
+    // ── Falhou tudo — retorna diagnóstico completo ────────────────────────────
+    console.error("[add-account-via-token] DIAG:", JSON.stringify(diag, null, 2));
+    return { statusCode: 400, headers, body: JSON.stringify({
+      error: "Não foi possível encontrar a conta Instagram vinculada a este token.",
+      diag,
+    }) };
 
   } catch (err) {
-    console.error("[add-account-via-token]", err);
-    return { statusCode: 500, headers, body: JSON.stringify({ error: "Erro interno: " + err.message }) };
+    console.error("[add-account-via-token] EXCEPTION:", err);
+    return { statusCode: 500, headers, body: JSON.stringify({ error: "Erro interno: " + err.message, diag }) };
   }
 };
 
-// ── Helper: monta resposta com troca de token ─────────────────────────────────
-async function buildResponse({ headers, meData, token, tokenType, APP_SECRET }) {
+async function buildOk({ headers, meData, token, tokenType, APP_SECRET }) {
   let finalToken    = token;
   let tokenDuration = tokenType === "system_user" ? "never-expires" : "short-lived";
   let expiresAt     = null;
 
-  // Trocar por long-lived apenas para tokens IG (não System User)
   if (tokenType === "ig") {
     try {
-      const llRes  = await fetch(`${GRAPH_IG}/access_token?grant_type=ig_exchange_token&client_secret=${APP_SECRET}&access_token=${token}`);
-      const llData = await llRes.json();
-      if (llData.access_token && !llData.error) {
-        finalToken    = llData.access_token;
+      const ll = await fetch(`${GRAPH_IG}/access_token?grant_type=ig_exchange_token&client_secret=${APP_SECRET}&access_token=${token}`);
+      const ld = await ll.json();
+      if (ld.access_token && !ld.error) {
+        finalToken    = ld.access_token;
         tokenDuration = "long-lived";
-        if (llData.expires_in) {
-          expiresAt = new Date(Date.now() + llData.expires_in * 1000).toISOString();
-        }
+        if (ld.expires_in) expiresAt = new Date(Date.now() + ld.expires_in * 1000).toISOString();
       }
     } catch { /* mantém token original */ }
   }
-
-  const account = {
-    id:               meData.id,
-    username:         meData.username,
-    name:             meData.name || meData.username,
-    profile_picture:  meData.profile_picture_url || null,
-    account_type:     meData.account_type || "BUSINESS",
-    followers_count:  meData.followers_count || 0,
-    media_count:      meData.media_count || 0,
-    access_token:     finalToken,
-    token_duration:   tokenDuration,
-    token_expires_at: expiresAt,
-    token_status:     "active",
-    added_via:        "manual_token",
-    connected_at:     new Date().toISOString(),
-  };
 
   return {
     statusCode: 200,
     headers,
     body: JSON.stringify({
       success: true,
-      account,
+      account: {
+        id:               meData.id,
+        username:         meData.username,
+        name:             meData.name || meData.username,
+        profile_picture:  meData.profile_picture_url || null,
+        account_type:     meData.account_type || "BUSINESS",
+        followers_count:  meData.followers_count || 0,
+        media_count:      meData.media_count || 0,
+        access_token:     finalToken,
+        token_duration:   tokenDuration,
+        token_expires_at: expiresAt,
+        token_status:     "active",
+        added_via:        "manual_token",
+        connected_at:     new Date().toISOString(),
+      },
       token_duration: tokenDuration,
-      warning: tokenDuration === "short-lived"
-        ? "Token de curta duração (1h). Adicione igualmente — o sistema tentará renovar automaticamente."
-        : null,
+      warning: tokenDuration === "short-lived" ? "Token de curta duração (1h). O sistema tentará renovar automaticamente." : null,
     }),
   };
 }
