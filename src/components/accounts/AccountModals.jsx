@@ -155,12 +155,13 @@ export function AddViaPageModal({ onClose, onAdded }) {
 
 // ── Modal: Adicionar via Access Token direto ──────────────────────────────────
 export function AddViaTokenModal({ onClose, onAdded }) {
-  const [token,    setToken]    = useState("");
-  const [nickname, setNickname] = useState("");
-  const [loading,  setLoading]  = useState(false);
-  const [error,    setError]    = useState(null);
-  const [preview,  setPreview]  = useState(null);
-  const [warning,  setWarning]  = useState(null);
+  const [token,     setToken]     = useState("");
+  const [igId,      setIgId]      = useState("");
+  const [nickname,  setNickname]  = useState("");
+  const [loading,   setLoading]   = useState(false);
+  const [error,     setError]     = useState(null);
+  const [preview,   setPreview]   = useState(null);
+  const [warning,   setWarning]   = useState(null);
   const [guideOpen, setGuideOpen] = useState(false);
 
   const validate = async () => {
@@ -170,7 +171,7 @@ export function AddViaTokenModal({ onClose, onAdded }) {
     try {
       const res  = await fetch("/api/add-account-via-token", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ access_token: token.trim() }),
+        body: JSON.stringify({ access_token: token.trim(), instagram_account_id: igId.trim() || undefined }),
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
@@ -284,6 +285,24 @@ export function AddViaTokenModal({ onClose, onAdded }) {
               onChange={(e) => { setToken(e.target.value); setPreview(null); setError(null); setWarning(null); }}
               placeholder="Cole o token aqui (começa com EAA... ou IG...)"
               style={{ width: "100%", minHeight: 80, fontFamily: "monospace", fontSize: 11, resize: "vertical", boxSizing: "border-box" }}
+              disabled={loading}
+            />
+          </div>
+
+          {/* ID da conta Instagram */}
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 600, display: "block", marginBottom: 4 }}>
+              ID da conta Instagram <span style={{ color: "var(--muted)", fontWeight: 400 }}>(opcional — necessário para Usuário do Sistema)</span>
+            </label>
+            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6, lineHeight: 1.5 }}>
+              Se usar token de Usuário do Sistema do Business Manager, informe o ID numérico da conta IG.
+              Encontre em: <strong style={{ color: "var(--text)" }}>Business Manager → Configurações → Contas do Instagram → clique na conta → Identificação</strong>
+            </div>
+            <input
+              type="text" value={igId}
+              onChange={(e) => { setIgId(e.target.value); setPreview(null); setError(null); }}
+              placeholder="Ex: 17841416939831362"
+              style={{ width: "100%", boxSizing: "border-box", fontFamily: "monospace", fontSize: 12 }}
               disabled={loading}
             />
           </div>
