@@ -478,23 +478,3 @@ function QueueItem({ item, vfItems, onEdit, onRemove }) {
     </div>
   );
 }
-
-function startOfDay(date) {
-  const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-}
-
-function dateLabel(ts) {
-  const today    = startOfDay(new Date());
-  const tomorrow = today + 86_400_000;
-  const dayAfter = today + 2 * 86_400_000;
-  const dayStart = startOfDay(new Date(ts));
-
-  if (dayStart === today)    return "Hoje";
-  if (dayStart === tomorrow) return "Amanhã";
-  if (dayStart === dayAfter) return "Depois de amanhã";
-
-  const d = new Date(ts);
-  return d.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" });
-}
