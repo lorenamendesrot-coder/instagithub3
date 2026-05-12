@@ -218,6 +218,8 @@ export default function Accounts() {
   const [refreshProgress, setRefreshProgress] = useState({ done: 0, total: 0 });
   const [checkingTokens,  setCheckingTokens]  = useState(false);
   const [tokenResults,    setTokenResults]    = useState(null); // null = não verificado ainda
+  const [selectMode,      setSelectMode]      = useState(false);
+  const [selected,        setSelected]        = useState(new Set());
 
   const APP_ID   = import.meta.env.VITE_META_APP_ID;
   const REDIRECT = encodeURIComponent(window.location.origin + "/api/auth-callback");
@@ -228,6 +230,7 @@ export default function Accounts() {
     onAccounts: async (accs) => {
       try {
         await addAccounts(accs);
+        await reloadAccounts();
         resetOauth();
       } catch (err) {
         alert("Erro ao salvar contas: " + err.message);
@@ -341,6 +344,11 @@ export default function Accounts() {
     if (!confirmModal) return;
     if (confirmModal.type === "remove") await removeAccount(confirmModal.id);
     if (confirmModal.type === "clear")  await clearAllAccounts();
+    if (confirmModal.type === "remove-selected") {
+      await Promise.all([...selected].map((id) => removeAccount(id)));
+      setSelected(new Set());
+      setSelectMode(false);
+    }
     setConfirmModal(null);
     setDetailAcc(null);
   };
@@ -376,9 +384,20 @@ export default function Accounts() {
           <div className="page-subtitle">{accounts.length} conta(s) vinculada(s) via Meta API</div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {accounts.length > 0 && (
+          {accounts.length > 0 && !selectMode && (
             <button className="btn btn-danger btn-sm" onClick={() => setConfirmModal({ type: "clear" })}>
               Remover todas
+            </button>
+          )}
+          {accounts.length > 0 && selectMode && selected.size > 0 && (
+            <button className="btn btn-danger btn-sm" onClick={() => setConfirmModal({ type: "remove-selected", count: selected.size })}>
+              🗑 Remover ({selected.size})
+            </button>
+          )}
+          {accounts.length > 0 && (
+            <button className="btn btn-ghost btn-sm" onClick={() => { setSelectMode((v) => !v); setSelected(new Set()); }}
+              style={selectMode ? { borderColor: "var(--accent)", color: "var(--accent)" } : {}}>
+              {selectMode ? "✕ Cancelar" : "☑ Selecionar"}
             </button>
           )}
           <button className="btn btn-ghost btn-sm" onClick={handleCheckTokens} disabled={checkingTokens || accounts.length === 0}>
@@ -544,9 +563,35 @@ export default function Accounts() {
                 <div
                   key={acc.id}
                   className="card card-hover"
-                  style={{ display: "flex", flexDirection: "column", gap: 10, cursor: "pointer", position: "relative" }}
-                  onClick={() => openDetail(acc)}
+                  style={{
+                    display: "flex", flexDirection: "column", gap: 10, cursor: "pointer", position: "relative",
+                    outline: selectMode && selected.has(acc.id) ? "2px solid var(--accent)" : "none",
+                    outlineOffset: 2,
+                  }}
+                  onClick={() => {
+                    if (selectMode) {
+                      setSelected((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(acc.id)) next.delete(acc.id); else next.add(acc.id);
+                        return next;
+                      });
+                    } else {
+                      openDetail(acc);
+                    }
+                  }}
                 >
+                  {/* Checkbox de seleção */}
+                  {selectMode && (
+                    <div style={{
+                      position: "absolute", top: 8, left: 8, width: 18, height: 18,
+                      borderRadius: 5, border: "2px solid var(--accent)",
+                      background: selected.has(acc.id) ? "var(--accent)" : "transparent",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      zIndex: 10, fontSize: 11, color: "#fff", pointerEvents: "none",
+                    }}>
+                      {selected.has(acc.id) && "✓"}
+                    </div>
+                  )}
                   {/* Botões de ação rápida no canto */}
                   <div style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 4 }} onClick={(e) => e.stopPropagation()}>
                     <button
@@ -680,11 +725,17 @@ export default function Accounts() {
       {/* ── Confirm Modal ──────────────────────────────────────────────────── */}
       <Modal
         open={!!confirmModal}
-        title={confirmModal?.type === "clear" ? "Remover todas as contas?" : `Desconectar @${confirmModal?.username}?`}
-        message={confirmModal?.type === "clear"
-          ? "Todas as contas e tokens serão removidos do dispositivo."
-          : "A conta será removida do Insta Manager. Você poderá reconectá-la quando quiser."}
-        confirmLabel={confirmModal?.type === "clear" ? "Remover todas" : "Desconectar"}
+        title={
+          confirmModal?.type === "clear" ? "Remover todas as contas?"
+          : confirmModal?.type === "remove-selected" ? `Remover ${confirmModal?.count} conta(s)?`
+          : `Desconectar @${confirmModal?.username}?`
+        }
+        message={
+          confirmModal?.type === "clear" ? "Todas as contas e tokens serão removidos do dispositivo."
+          : confirmModal?.type === "remove-selected" ? `As ${confirmModal?.count} contas selecionadas serão desconectadas.`
+          : "A conta será removida do Insta Manager. Você poderá reconectá-la quando quiser."
+        }
+        confirmLabel={confirmModal?.type === "clear" || confirmModal?.type === "remove-selected" ? "Remover" : "Desconectar"}
         confirmDanger
         onConfirm={handleConfirm}
         onCancel={() => setConfirmModal(null)}
