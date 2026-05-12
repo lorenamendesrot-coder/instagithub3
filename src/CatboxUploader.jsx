@@ -19,14 +19,27 @@ function isVideo(name) {
 //   5–50%  : sanitização (metadados)
 //   50–98% : upload para R2
 //   100%   : concluído
+// Detecta MIME correto — file.type pode estar vazio em drag-and-drop
+function detectMime(file) {
+  if (file.type && file.type !== "application/octet-stream") return file.type;
+  const ext = file.name.split(".").pop().toLowerCase();
+  const MAP = {
+    mp4: "video/mp4", mov: "video/quicktime", webm: "video/webm",
+    jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png",
+    webp: "image/webp", gif: "image/gif",
+  };
+  return MAP[ext] || "video/mp4";
+}
+
 async function uploadToR2WithSanitize(file, onProgress, onSanitizeProgress, onSanitized) {
   // Fase 1: Presign (0→5%)
   onProgress({ upload: 0, sanitize: 0, phase: "presign" });
 
+  const mimeType = detectMime(file);
   const presignRes = await fetch("/api/r2-presign", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ fileName: file.name, mimeType: file.type || "video/mp4" }),
+    body: JSON.stringify({ fileName: file.name, mimeType }),
   });
 
   if (!presignRes.ok) {
@@ -50,7 +63,10 @@ async function uploadToR2WithSanitize(file, onProgress, onSanitizeProgress, onSa
     await new Promise((r) => setTimeout(r, 20));
 
     const { file: sanitized, report } = await sanitizeFile(file);
-    fileToUpload   = sanitized;
+    // Garantir MIME correto no arquivo sanitizado
+    fileToUpload = sanitized.type
+      ? sanitized
+      : new File([sanitized], sanitized.name, { type: mimeType, lastModified: sanitized.lastModified });
     sanitizeReport = report;
 
     onSanitizeProgress(100);
@@ -81,7 +97,7 @@ async function uploadToR2WithSanitize(file, onProgress, onSanitizeProgress, onSa
     xhr.timeout   = 5 * 60 * 1000;
 
     xhr.open("PUT", presignedUrl);
-    xhr.setRequestHeader("Content-Type", fileToUpload.type || "video/mp4");
+    xhr.setRequestHeader("Content-Type", mimeType); // usa mimeType detectado, não file.type
     xhr.send(fileToUpload);
   });
 
