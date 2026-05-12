@@ -71,23 +71,16 @@ function recordPost(id, ok) {
 }
 
 // ─── Polling do container de vídeo ───────────────────────────────────────────
-// Timeout da Netlify Function: 26s
-// Criação do container: ~2-4s
-// Polling: máximo 3 tentativas × 4s = 12s
-// Total: ~16-18s — dentro do limite
 async function waitForContainer(id, token) {
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 5; i++) {
     await sleep(4000);
     try {
-      const r = await fetch(`${graph(token)}/${id}?fields=status_code,status&access_token=${token}`);
+      const r = await fetch(`${graph(token)}/${id}?fields=status_code&access_token=${token}`);
       const d = await r.json();
       if (d.status_code === "FINISHED") return { ready: true };
-      if (d.status_code === "ERROR") {
-        return { ready: false, error: `Instagram: ${d.status || "erro no processamento do vídeo"}` };
-      }
+      if (d.status_code === "ERROR")    return { ready: false, error: "Instagram: erro no processamento do vídeo" };
     } catch (_) {}
   }
-  // Ainda processando — retorna pending para o publish-finish finalizar
   return { ready: false, pending: true, creation_id: id };
 }
 

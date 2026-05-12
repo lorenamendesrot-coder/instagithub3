@@ -50,23 +50,19 @@ function sumInsightValues(insightObj) {
 // para certos tipos de conta. Falhas individuais não interrompem o fluxo.
 async function fetchInsightsWindow(igId, token, sinceUnix, untilUnix) {
   const metrics = ["reach", "profile_views", "website_clicks", "follower_count"];
+  const url =
+    `${graphBase(token)}${igId}/insights` +
+    `?metric=${metrics.join(",")}` +
+    `&period=day` +
+    `&since=${sinceUnix}&until=${untilUnix}` +
+    `&access_token=${token}`;
 
-  // Tokens IGAA (Instagram Login) usam /me/insights
-  // Tokens EAA (Facebook Login) usam /{igId}/insights
-  const base = isIGToken(token)
-    ? `${GRAPH_IG}/me/insights`
-    : `${GRAPH_FB}/${igId}/insights`;
-
-  const url = `${base}?metric=${metrics.join(",")}&period=day&since=${sinceUnix}&until=${untilUnix}&access_token=${token}`;
   const data = await gfetch(url);
 
+  // Se a chamada inteira falhou, tentamos uma chamada conservadora só com `reach`
   if (data.error || !data.data) {
-    // Fallback só com reach
-    const fallbackBase = isIGToken(token)
-      ? `${GRAPH_IG}/me/insights`
-      : `${GRAPH_FB}/${igId}/insights`;
     const fallback = await gfetch(
-      `${fallbackBase}?metric=reach&period=day&since=${sinceUnix}&until=${untilUnix}&access_token=${token}`
+      `${graphBase(token)}${igId}/insights?metric=reach&period=day&since=${sinceUnix}&until=${untilUnix}&access_token=${token}`
     );
     if (fallback.error || !fallback.data) {
       return { available: false, error: fallback.error?.message || data.error?.message };
@@ -74,16 +70,21 @@ async function fetchInsightsWindow(igId, token, sinceUnix, untilUnix) {
     return {
       available: true,
       reach: sumInsightValues(fallback.data.find((m) => m.name === "reach")),
-      profile_views: null, website_clicks: null, follower_count: null, partial: true,
+      profile_views: null,
+      website_clicks: null,
+      follower_count: null,
+      partial: true,
     };
   }
 
   const findMetric = (name) => data.data.find((m) => m.name === name);
+
   return {
     available: true,
     reach:           sumInsightValues(findMetric("reach")),
     profile_views:   sumInsightValues(findMetric("profile_views")),
     website_clicks:  sumInsightValues(findMetric("website_clicks")),
+    // follower_count não é cumulativo — pegamos o último valor da janela
     follower_count:  (() => {
       const m = findMetric("follower_count");
       if (!m?.values?.length) return null;
@@ -234,23 +235,23 @@ export const handler = async (event) => {
   try {
     // ── 1. Perfil ──────────────────────────────────────────────────────────
     // Campos variam por tipo de token:
-    // - Instagram Login (IGAA): usa graph.instagram.com/me com novos campos
-    // - Facebook Login (EAA): usa graph.facebook.com/v21.0/{id} com campos antigos
-    const profileFields = isIGToken(access_token)
+    // - Instagram Login (IGAA): usa graph.instagram.com/me (retorna conta autenticada)
+    // - Facebook Login (EAA): usa graph.facebook.com/v21.0/{id}
+    const igToken = isIGToken(access_token);
+
+    const profileFields = igToken
       ? ["id", "username", "name", "biography", "website",
          "profile_picture_url", "followers_count", "following_count", "media_count"].join(",")
       : ["id", "username", "name", "biography", "website",
          "profile_picture_url", "followers_count", "follows_count", "media_count"].join(",");
 
-    const graphUrl = isIGToken(access_token)
+    const graphUrl = igToken
       ? `${GRAPH_IG}/me?fields=${profileFields}&access_token=${access_token}`
       : `${GRAPH_FB}/${instagram_id}?fields=${profileFields}&access_token=${access_token}`;
     const profileData = await gfetch(graphUrl);
 
     if (profileData.error) {
       if (profileData.error.code === 190) {
-        // Token expirado — retorna análise sinalizando danger para o frontend
-        // poder renderizar consistentemente.
         const health = analyzeAccountHealth({ tokenExpired: true });
         return {
           statusCode: 401,
@@ -265,15 +266,18 @@ export const handler = async (event) => {
       return { statusCode: 400, headers, body: JSON.stringify({ error: profileData.error.message }) };
     }
 
+    // Para tokens IG, o ID real vem do /me — usa ele nas chamadas seguintes
+    const resolvedId = profileData.id || instagram_id;
+
     // ── 2. Limit + insights em paralelo ────────────────────────────────────
     const now             = Math.floor(Date.now() / 1000);
     const sevenDaysAgo    = unixDaysAgo(7);
     const fourteenDaysAgo = unixDaysAgo(14);
 
     const [limitData, insights7d, insightsPrev7d] = await Promise.all([
-      gfetch(`${graphBase(access_token)}${instagram_id}/content_publishing_limit?fields=config,quota_usage&access_token=${access_token}`),
-      fetchInsightsWindow(instagram_id, access_token, sevenDaysAgo, now),
-      fetchInsightsWindow(instagram_id, access_token, fourteenDaysAgo, sevenDaysAgo),
+      gfetch(`${graphBase(access_token)}${resolvedId}/content_publishing_limit?fields=config,quota_usage&access_token=${access_token}`),
+      fetchInsightsWindow(resolvedId, access_token, sevenDaysAgo, now),
+      fetchInsightsWindow(resolvedId, access_token, fourteenDaysAgo, sevenDaysAgo),
     ]);
 
     let publishingLimit = null;
