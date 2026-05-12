@@ -46,6 +46,9 @@ export default function Warmup() {
   const [selectedAccIds, setSelectedAccIds] = useState(null); // null = todas selecionadas
   const [urlInputs,    setUrlInputs]    = useState({ reels: "", feed: "", stories: "" });
   const [dayConfig, setDayConfig] = useState(WARMUP_PRESET_2D.days);
+  const [configMode,   setConfigMode]   = useState("preset"); // "preset" | "target"
+  // Estado do modo target
+  const [targetConfig, setTargetConfig] = useState({ reels: 10, feed: 0, stories: 0, periodHours: 1, days: 1, windowStart: "09:00", windowEnd: "21:00" });
   const [selectedDays,    setSelectedDays]    = useState(() => WARMUP_PRESET_2D.days.map((d) => d.day)); // dias ativos
   const [loopEnabled,     setLoopEnabled]     = useState(false);
   const [loopDays,        setLoopDays]        = useState(7); // quantos dias extras em loop
@@ -233,7 +236,7 @@ export default function Warmup() {
   const parsedCaptions = useMemo(() => bulkCaptions.split("\n").map((l) => l.trim()).filter(Boolean), [bulkCaptions]);
 
   const generateQueue = useCallback(() => {
-    const currentFiles = filesRef.current; // usa ref para garantir valor mais recente
+    const currentFiles = filesRef.current;
     const totalDone = ["reels","feed","stories"].reduce((s, t) => s + (currentFiles[t]||[]).filter(f=>f.status==="done").length, 0);
     if (!totalDone) { alert("Faça o upload de pelo menos 1 mídia antes de gerar a fila."); return; }
     if (!selectedAccounts.length) { alert("Selecione pelo menos uma conta para o aquecimento."); return; }
@@ -242,31 +245,50 @@ export default function Warmup() {
       feed:    (currentFiles.feed    || []).filter((f) => f.status === "done").map((f) => ({ url: f.url, name: f.name })),
       stories: (currentFiles.stories || []).filter((f) => f.status === "done").map((f) => ({ url: f.url, name: f.name })),
     };
-    const activeDays = dayConfig.filter((d) => selectedDays.includes(d.day));
-    if (!activeDays.length) { alert("Selecione pelo menos um dia para gerar a fila."); return; }
-    const generated = buildWarmupQueue({
-      accounts: selectedAccounts, mediaByType,
-      captions: parsedCaptions, captionMode,
-      preset: { ...WARMUP_PRESET_2D, days: activeDays },
-      startDateStr: startDate, distribution,
-      loopEnabled, loopDays,
-    });
-    if (!generated.length) {
-      const r = mediaByType.reels.length, f = mediaByType.feed.length, s = mediaByType.stories.length;
-      const daysSummary = activeDays.map(d => `Dia${d.day}(R=${d.reels},F=${d.feed},S=${d.stories})`).join(", ");
-      alert(
-        `Nenhum post gerado.\n` +
-        `Mídias prontas: Reels=${r}, Feed=${f}, Stories=${s}\n` +
-        `Contas: ${selectedAccounts.length}\n` +
-        `Dias ativos: ${daysSummary}\n\n` +
-        `Se Reels>0 e Dias com R>0, reporte esse texto.`
-      );
-      return;
+
+    let generated;
+
+    if (configMode === "target") {
+      // Modo target: gera dias sintéticos baseados na meta
+      const { reels, feed, stories, periodHours, days, windowStart, windowEnd } = targetConfig;
+      const totalT = reels + feed + stories;
+      if (!totalT) { alert("Defina pelo menos 1 post no modo Por Meta."); return; }
+      const syntheticDays = Array.from({ length: days }, (_, i) => ({
+        day: i + 1,
+        label: `Dia ${i + 1}`,
+        reels, feed, stories,
+        windowStart, windowEnd,
+        intervalMinMin: 60,
+        intervalMinMax: 120,
+        targetMode: true,
+        targetCount: totalT,
+        targetPeriodHours: periodHours,
+      }));
+      generated = buildWarmupQueue({
+        accounts: selectedAccounts, mediaByType,
+        captions: parsedCaptions, captionMode,
+        preset: { ...WARMUP_PRESET_2D, days: syntheticDays },
+        startDateStr: startDate, distribution,
+        loopEnabled: false, loopDays: 0,
+      });
+    } else {
+      // Modo preset (por dia)
+      const activeDays = dayConfig.filter((d) => selectedDays.includes(d.day));
+      if (!activeDays.length) { alert("Selecione pelo menos um dia para gerar a fila."); return; }
+      generated = buildWarmupQueue({
+        accounts: selectedAccounts, mediaByType,
+        captions: parsedCaptions, captionMode,
+        preset: { ...WARMUP_PRESET_2D, days: activeDays },
+        startDateStr: startDate, distribution,
+        loopEnabled, loopDays,
+      });
     }
+
+    if (!generated.length) { alert("Nenhum post gerado. Verifique se há mídias prontas compatíveis com os tipos configurados."); return; }
     setQueue(generated);
     setSaved(false);
     setTab("preview");
-  }, [selectedAccounts, parsedCaptions, captionMode, dayConfig, selectedDays, startDate, distribution, loopEnabled, loopDays]);
+  }, [selectedAccounts, parsedCaptions, captionMode, dayConfig, selectedDays, startDate, distribution, loopEnabled, loopDays, configMode, targetConfig]);
 
   const cancelWarmupQueue = useCallback(async () => {
     if (!window.confirm("Cancelar toda a fila de aquecimento pendente? Posts já publicados não serão desfeitos.")) return;
@@ -480,7 +502,106 @@ export default function Warmup() {
       {tab === "config" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
 
+          {/* Seletor de modo */}
+          <div className="card">
+            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 12 }}>⚙️ Modo de Configuração</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {[
+                { id: "preset", icon: "📅", label: "Por Dia",     desc: "Define posts por tipo em cada dia (Dia 1, Dia 2, Dia 3...)" },
+                { id: "target", icon: "🎯", label: "Por Meta",    desc: "Define quantidade + período e o sistema distribui automaticamente" },
+              ].map(({ id, icon, label, desc }) => (
+                <button key={id} onClick={() => setConfigMode(id)} style={{
+                  flex: 1, padding: "12px 14px", borderRadius: 10, cursor: "pointer", textAlign: "left",
+                  border: `1.5px solid ${configMode === id ? "var(--accent)" : "var(--border)"}`,
+                  background: configMode === id ? "rgba(124,92,252,0.08)" : "var(--bg3)",
+                  transition: "all 0.15s",
+                }}>
+                  <div style={{ fontSize: 20, marginBottom: 4 }}>{icon}</div>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: configMode === id ? "var(--accent-light)" : "var(--text)" }}>{label}</div>
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* ── Modo Target ── */}
+          {configMode === "target" && (
+            <div className="card">
+              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 14, color: "var(--accent-light)" }}>🎯 Distribuição Automática por Meta</div>
+
+              {/* Linha 1: quantidade por tipo */}
+              <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>Quantidade por tipo</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>
+                {[
+                  { key: "reels",   icon: "🎬", label: "Reels"   },
+                  { key: "feed",    icon: "🖼",  label: "Feed"    },
+                  { key: "stories", icon: "⭕",  label: "Stories" },
+                ].map(({ key, icon, label }) => (
+                  <div key={key}>
+                    <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 4 }}>{icon} {label}</label>
+                    <input type="number" min={0} max={200} value={targetConfig[key]}
+                      onChange={(e) => setTargetConfig((p) => ({ ...p, [key]: parseInt(e.target.value) || 0 }))}
+                      style={{ marginTop: 4 }} />
+                  </div>
+                ))}
+              </div>
+
+              {/* Linha 2: período e dias */}
+              <div style={{ fontSize: 11, color: "var(--muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>Distribuição</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 16 }}>
+                <div>
+                  <label>Período (horas)</label>
+                  <input type="number" min={0.5} max={24} step={0.5} value={targetConfig.periodHours}
+                    onChange={(e) => setTargetConfig((p) => ({ ...p, periodHours: parseFloat(e.target.value) || 1 }))} />
+                  <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>Ex: 1 = em 1h</div>
+                </div>
+                <div>
+                  <label>Dias</label>
+                  <input type="number" min={1} max={30} value={targetConfig.days}
+                    onChange={(e) => setTargetConfig((p) => ({ ...p, days: parseInt(e.target.value) || 1 }))} />
+                  <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 2 }}>Repetir por X dias</div>
+                </div>
+                <div>
+                  <label>Início janela</label>
+                  <input type="time" value={targetConfig.windowStart}
+                    onChange={(e) => setTargetConfig((p) => ({ ...p, windowStart: e.target.value }))} />
+                </div>
+                <div>
+                  <label>Fim janela</label>
+                  <input type="time" value={targetConfig.windowEnd}
+                    onChange={(e) => setTargetConfig((p) => ({ ...p, windowEnd: e.target.value }))} />
+                </div>
+              </div>
+
+              {/* Preview do cálculo */}
+              {(() => {
+                const total = (targetConfig.reels || 0) + (targetConfig.feed || 0) + (targetConfig.stories || 0);
+                if (!total) return null;
+                const ph = targetConfig.periodHours || 1;
+                const intervalMin = total > 1 ? (ph * 60) / (total - 1) : ph * 60;
+                return (
+                  <div style={{ padding: "10px 14px", borderRadius: 8, background: "rgba(124,92,252,0.06)", border: "1px solid rgba(124,92,252,0.2)", fontSize: 12 }}>
+                    <div style={{ marginBottom: 4 }}>
+                      📊 <b style={{ color: "var(--text)" }}>{total} posts</b> em <b style={{ color: "var(--accent-light)" }}>{ph}h</b>
+                      {" "}= intervalo médio de <b style={{ color: "var(--text)" }}>~{intervalMin.toFixed(1)} min</b> entre cada post
+                    </div>
+                    <div style={{ color: "var(--muted)" }}>
+                      🔁 Repetindo por <b style={{ color: "var(--text)" }}>{targetConfig.days} dia(s)</b>
+                      {" "}= <b style={{ color: "var(--text)" }}>{total * targetConfig.days} posts no total</b> por conta
+                    </div>
+                    {intervalMin < 3 && (
+                      <div style={{ marginTop: 6, color: "var(--warning)" }}>
+                        ⚠️ Intervalo muito curto — risco de rate limit da Meta
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
           {/* Preset ativo */}
+          {configMode === "preset" && (
           <div className="card" style={{ borderColor: "rgba(124,92,252,0.3)", background: "rgba(124,92,252,0.04)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <span style={{ fontSize: 20 }}>🚀</span>
@@ -491,6 +612,7 @@ export default function Warmup() {
               <span className="badge badge-purple">Ativo</span>
             </div>
           </div>
+          )}
 
           {/* Seleção de contas */}
           <div className="card">
@@ -605,7 +727,7 @@ export default function Warmup() {
             )}
           </div>
 
-          {/* Configurações gerais */}
+          {/* Configurações gerais — ambos os modos */}
           <div className="card">
             <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 14 }}>⚙️ Configurações Gerais</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
@@ -634,6 +756,9 @@ export default function Warmup() {
               </div>
             </div>
           </div>
+
+          {/* Blocos exclusivos do modo Preset */}
+          {configMode === "preset" && (<>
 
           {/* Seleção de dias ativos */}
           <div className="card" style={{ marginBottom: 4 }}>
@@ -888,6 +1013,8 @@ export default function Warmup() {
             )}
           </div>
 
+          </>)}
+
           <button
             className="btn btn-primary"
             onClick={generateQueue}
@@ -898,7 +1025,8 @@ export default function Warmup() {
               ? "📤 Faça upload das mídias primeiro"
               : !selectedAccounts.length
                 ? "👥 Nenhuma conta elegível"
-                : `🚀 Gerar Fila de Aquecimento — ${selectedAccounts.length} conta(s)`}
+                : `🚀 Gerar Fila${configMode === "target" ? ` (Meta: ${(targetConfig.reels||0)+(targetConfig.feed||0)+(targetConfig.stories||0)} posts/${targetConfig.periodHours}h × ${targetConfig.days}d)` : ""} — ${selectedAccounts.length} conta(s)`}
+          </button>
           </button>
 
           <div style={{ padding: "12px 16px", borderRadius: 10, background: "rgba(245,158,11,0.05)", border: "1px solid rgba(245,158,11,0.15)", fontSize: 11, color: "var(--muted)" }}>
