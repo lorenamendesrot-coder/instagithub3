@@ -1,11 +1,13 @@
 // useOAuthPopup.js
-// Abre o OAuth do Meta em um popup flutuante.
-// Quando o Instagram redireciona de volta, o popup fecha sozinho
-// e o App.jsx já recebe as contas via postMessage — sem recarregar a página.
+// Suporta dois fluxos de autenticação:
+//   "facebook"  → Facebook Login (requer Página vinculada ao Instagram)
+//   "instagram" → Instagram Login (direto, sem Página — lançado em jul/2024)
+//
+// O fluxo "instagram" é o recomendado para contas sem Página.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const SCOPE = [
+const FB_SCOPE = [
   "instagram_basic",
   "instagram_content_publish",
   "instagram_manage_insights",
@@ -16,16 +18,34 @@ const SCOPE = [
   "pages_manage_metadata",
 ].join(",");
 
-export function useOAuthPopup({ onAccounts, onError }) {
-  const [status,   setStatus]   = useState("idle"); // idle | opening | waiting | saving | done | error
+const IG_SCOPE = [
+  "instagram_basic",
+  "instagram_content_publish",
+  "instagram_manage_insights",
+  "instagram_manage_comments",
+  "instagram_manage_messages",
+].join(",");
+
+function buildOAuthUrl(flow, appId) {
+  if (flow === "instagram") {
+    const redirect = encodeURIComponent(window.location.origin + "/api/auth-callback-ig");
+    return `https://api.instagram.com/oauth/authorize?client_id=${appId}&redirect_uri=${redirect}&scope=${IG_SCOPE}&response_type=code&state=popup`;
+  }
+  // facebook (padrão legado)
+  const redirect = encodeURIComponent(window.location.origin + "/api/auth-callback");
+  return `https://www.facebook.com/v21.0/dialog/oauth?client_id=${appId}&redirect_uri=${redirect}&scope=${FB_SCOPE}&response_type=code&state=popup`;
+}
+
+// flow: "instagram" | "facebook"  (padrão: "instagram")
+export function useOAuthPopup({ onAccounts, onError, flow = "instagram" }) {
+  const [status,   setStatus]   = useState("idle"); // idle | waiting | saving | done | error
   const [errorMsg, setErrorMsg] = useState(null);
-  const popupRef  = useRef(null);
-  const timerRef  = useRef(null);
+  const popupRef = useRef(null);
+  const timerRef = useRef(null);
 
   // Escuta mensagens do popup filho
   useEffect(() => {
     const handler = (event) => {
-      // Só aceita mensagens da mesma origem
       if (event.origin !== window.location.origin) return;
 
       const { type, accounts, error } = event.data || {};
@@ -55,11 +75,9 @@ export function useOAuthPopup({ onAccounts, onError }) {
   }, []);
 
   const openPopup = useCallback(() => {
-    const APP_ID   = import.meta.env.VITE_META_APP_ID;
-    const redirect = window.location.origin + "/api/auth-callback";
-    const url      = `https://www.facebook.com/v21.0/dialog/oauth?client_id=${APP_ID}&redirect_uri=${encodeURIComponent(redirect)}&scope=${SCOPE}&response_type=code&state=popup`;
+    const appId = import.meta.env.VITE_META_APP_ID;
+    const url   = buildOAuthUrl(flow, appId);
 
-    // Dimensões e posição centrada
     const w = 520, h = 680;
     const left = Math.round(window.screenX + (window.outerWidth  - w) / 2);
     const top  = Math.round(window.screenY + (window.outerHeight - h) / 2);
@@ -85,7 +103,6 @@ export function useOAuthPopup({ onAccounts, onError }) {
     timerRef.current = setInterval(() => {
       if (popup.closed) {
         clearInterval(timerRef.current);
-        // Se ainda está em "waiting", o usuário fechou manualmente
         setStatus((prev) => {
           if (prev === "waiting") {
             setErrorMsg("Login cancelado.");
@@ -96,7 +113,7 @@ export function useOAuthPopup({ onAccounts, onError }) {
         popupRef.current = null;
       }
     }, 500);
-  }, [onAccounts, onError]);
+  }, [flow, onAccounts, onError]);
 
   const reset = useCallback(() => {
     closePopup();
