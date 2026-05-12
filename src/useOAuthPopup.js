@@ -18,18 +18,19 @@ const FB_SCOPE = [
   "pages_manage_metadata",
 ].join(",");
 
+// Scopes do Instagram Login (novos — os antigos foram depreciados em jan/2025)
 const IG_SCOPE = [
-  "instagram_basic",
-  "instagram_content_publish",
-  "instagram_manage_insights",
-  "instagram_manage_comments",
-  "instagram_manage_messages",
+  "instagram_business_basic",
+  "instagram_business_content_publish",
+  "instagram_business_manage_comments",
+  "instagram_business_manage_messages",
 ].join(",");
 
 function buildOAuthUrl(flow, appId) {
   if (flow === "instagram") {
     const redirect = encodeURIComponent(window.location.origin + "/api/auth-callback-ig");
-    return `https://api.instagram.com/oauth/authorize?client_id=${appId}&redirect_uri=${redirect}&scope=${IG_SCOPE}&response_type=code&state=popup`;
+    // ✅ URL correta: www.instagram.com (não api.instagram.com)
+    return `https://www.instagram.com/oauth/authorize?client_id=${appId}&redirect_uri=${redirect}&scope=${IG_SCOPE}&response_type=code&state=popup`;
   }
   // facebook (padrão legado)
   const redirect = encodeURIComponent(window.location.origin + "/api/auth-callback");
@@ -75,7 +76,12 @@ export function useOAuthPopup({ onAccounts, onError, flow = "instagram" }) {
   }, []);
 
   const openPopup = useCallback(() => {
-    const appId = import.meta.env.VITE_META_APP_ID;
+    // Para o fluxo Instagram, usa VITE_META_IG_APP_ID (Instagram App ID separado)
+    // Para Facebook, usa VITE_META_APP_ID (Facebook App ID)
+    const appId = flow === "instagram"
+      ? (import.meta.env.VITE_META_IG_APP_ID || import.meta.env.VITE_META_APP_ID)
+      : import.meta.env.VITE_META_APP_ID;
+
     const url   = buildOAuthUrl(flow, appId);
 
     const w = 520, h = 680;
