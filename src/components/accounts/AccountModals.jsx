@@ -194,7 +194,7 @@ export function AddViaTokenModal({ onClose, onAdded }) {
     {
       n: "2",
       title: "Navegue até Instagram",
-      desc: "No menu esquerdo: Instagram → API setup with Instagram Login (ou "API setup with Instagram business login").",
+      desc: "No menu esquerdo: Instagram → API setup with Instagram Login.",
     },
     {
       n: "3",
