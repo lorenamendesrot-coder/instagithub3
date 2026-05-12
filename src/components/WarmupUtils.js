@@ -128,6 +128,44 @@ export async function uploadFile(file, onProgress, onSanitized) {
   return publicUrl;
 }
 
+// Upload via FilGarden proxy (alternativo ao R2, até ~100MB)
+export async function uploadFileGarden(file, onProgress) {
+  onProgress(5);
+
+  // Converte o arquivo para base64
+  const fileBase64 = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(",")[1]);
+    reader.onerror = () => reject(new Error("Falha ao ler arquivo"));
+    reader.readAsDataURL(file);
+  });
+
+  onProgress(40);
+
+  const res = await fetch("/api/filegarden-proxy", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      fileBase64,
+      fileName: file.name,
+      mimeType: file.type || "video/mp4",
+    }),
+  });
+
+  onProgress(90);
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Erro FilGarden (${res.status})`);
+  }
+
+  const { url } = await res.json();
+  if (!url) throw new Error("FilGarden não retornou URL válida");
+
+  onProgress(100);
+  return url;
+}
+
 export function addJitter(date, minRange, secRange) {
   const jitterMin = Math.floor(Math.random() * (minRange[1] - minRange[0] + 1)) + minRange[0];
   const jitterSec = Math.floor(Math.random() * (secRange[1] - secRange[0] + 1)) + secRange[0];
