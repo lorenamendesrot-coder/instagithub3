@@ -3,7 +3,7 @@
 // Funciona com contas Business e Creator diretamente — zero dependência de Página.
 //
 // Fluxo:
-//   1. Frontend abre popup → api.instagram.com/oauth/authorize
+//   1. Frontend abre popup → www.instagram.com/oauth/authorize
 //   2. Usuário autoriza no Instagram
 //   3. Instagram redireciona para esta função com ?code=...&state=popup
 //   4. Trocamos o code por token curto  (api.instagram.com/oauth/access_token)
@@ -49,13 +49,16 @@ export const handler = async (event) => {
     return respondWith({ error: "Código de autorização ausente" }, isPopup);
   }
 
-  const APP_ID      = process.env.META_APP_ID;
-  const APP_SECRET  = process.env.META_APP_SECRET;
+  // ✅ Usa META_IG_APP_ID e META_IG_APP_SECRET para o fluxo Instagram Login
+  // (IDs separados do Facebook Login — configurados no painel do app no Meta)
+  const APP_ID     = process.env.META_IG_APP_ID     || process.env.META_APP_ID;
+  const APP_SECRET = process.env.META_IG_APP_SECRET  || process.env.META_APP_SECRET;
+
   const REDIRECT_URI = (process.env.META_REDIRECT_URI_IG || process.env.META_REDIRECT_URI || "")
     .replace("/auth-callback", "/auth-callback-ig");
 
   if (!APP_ID || !APP_SECRET) {
-    return respondWith({ error: "Configuração do app ausente (META_APP_ID / META_APP_SECRET)" }, isPopup);
+    return respondWith({ error: "Configuração do app ausente (META_IG_APP_ID / META_IG_APP_SECRET)" }, isPopup);
   }
 
   try {
