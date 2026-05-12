@@ -16,6 +16,7 @@ import { useToast }        from "./useToast.js";
 import { useServiceWorker } from "./useServiceWorker.js";
 import { useTokenCheck }   from "./useTokenCheck.js";
 import { useOAuthUrl }     from "./useOAuthUrl.js";
+import { useOAuthPopup }  from "./useOAuthPopup.js";
 import { dbGetAll, dbPut, dbPutMany, dbDelete, dbClear } from "./useDB.js";
 import Sidebar from "./Sidebar.jsx";
 import Toast   from "./Toast.jsx";
@@ -334,6 +335,26 @@ function AppShell() {
   const { toast, showToast }   = useToast();
   const { swStatus }           = useServiceWorker();
   const { oauthUrl }           = useOAuthUrl();
+
+  // OAuth via popup — abre janela do Instagram, fecha sozinha, salva contas automaticamente
+  const { status: oauthStatus, errorMsg: oauthError, openPopup, reset: resetOauth } = useOAuthPopup({
+    onAccounts: async (accs) => {
+      try {
+        showToast("success", `✅ ${accs.length} conta(s) conectada(s)! Salvando...`);
+        await addAccounts(accs);
+        showToast("success", `✅ ${accs.length} conta(s) salvas com sucesso!`);
+        resetOauth();
+      } catch (err) {
+        showToast("error", "Erro ao salvar contas: " + err.message);
+        resetOauth();
+      }
+    },
+    onError: (err) => {
+      if (err !== "popup_blocked" && err !== "Login cancelado.") {
+        showToast("error", "Erro no login: " + (err || "Tente novamente."));
+      }
+    },
+  });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const location = useLocation();
   const { addEntry } = useHistory();
@@ -373,7 +394,7 @@ function AppShell() {
     <SchedulerProvider addEntry={addEntry}>
       <div style={{ display: "flex", minHeight: "100vh" }}>
         <aside style={{ width: 230, background: "var(--bg2)", borderRight: "1px solid var(--border)", display: "flex", flexDirection: "column", flexShrink: 0, position: "sticky", top: 0, height: "100vh" }} className="sidebar-desktop">
-          <Sidebar accounts={accounts} swStatus={swStatus} oauthUrl={oauthUrl} syncing={syncing} loading={accountsLoading} />
+          <Sidebar accounts={accounts} swStatus={swStatus} oauthUrl={oauthUrl} syncing={syncing} loading={accountsLoading} onConnectInstagram={openPopup} oauthStatus={oauthStatus} />
         </aside>
 
         <div className="mobile-header">
@@ -382,7 +403,15 @@ function AppShell() {
             <span style={{ fontWeight: 700, fontSize: 14 }}>Insta Manager</span>
             {syncing && <span style={{ color: "var(--accent-light)", animation: "spin 1s linear infinite", display: "inline-block", fontSize: 14 }}>⟳</span>}
           </div>
-          <a href={oauthUrl} style={{ fontSize: 12, fontWeight: 600, padding: "6px 12px", borderRadius: 8, background: "linear-gradient(135deg, var(--accent), #9b4dfc)", color: "#fff", textDecoration: "none" }}>+ Conta</a>
+          <button
+            onClick={oauthStatus === "waiting" ? undefined : openPopup}
+            disabled={oauthStatus === "waiting" || oauthStatus === "saving"}
+            style={{ fontSize: 12, fontWeight: 600, padding: "6px 12px", borderRadius: 8, background: "linear-gradient(135deg, var(--accent), #9b4dfc)", color: "#fff", border: "none", cursor: oauthStatus === "waiting" ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 6, opacity: oauthStatus === "waiting" || oauthStatus === "saving" ? 0.7 : 1 }}
+          >
+            {oauthStatus === "waiting" ? <><span className="spinner" style={{ width: 11, height: 11, borderTopColor: "#fff" }} /> Aguardando...</>
+            : oauthStatus === "saving"  ? <><span className="spinner" style={{ width: 11, height: 11, borderTopColor: "#fff" }} /> Salvando...</>
+            : "+ Conta"}
+          </button>
         </div>
 
         <MobileBottomNav />
