@@ -54,8 +54,10 @@ export const handler = async (event) => {
   const APP_ID     = process.env.META_IG_APP_ID     || process.env.META_APP_ID;
   const APP_SECRET = process.env.META_IG_APP_SECRET  || process.env.META_APP_SECRET;
 
-  const REDIRECT_URI = (process.env.META_REDIRECT_URI_IG || process.env.META_REDIRECT_URI || "")
-    .replace("/auth-callback", "/auth-callback-ig");
+  // Usa META_REDIRECT_URI_IG diretamente — deve ser a URL exata cadastrada no Meta:
+  // ex: https://eclectic-bombolone-29d49b.netlify.app/api/auth-callback-ig
+  const REDIRECT_URI = process.env.META_REDIRECT_URI_IG
+    || (process.env.URL ? process.env.URL + "/api/auth-callback-ig" : "");
 
   if (!APP_ID || !APP_SECRET) {
     return respondWith({ error: "Configuração do app ausente (META_IG_APP_ID / META_IG_APP_SECRET)" }, isPopup);
