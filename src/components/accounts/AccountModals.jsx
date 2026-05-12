@@ -161,6 +161,7 @@ export function AddViaTokenModal({ onClose, onAdded }) {
   const [error,    setError]    = useState(null);
   const [preview,  setPreview]  = useState(null);
   const [warning,  setWarning]  = useState(null);
+  const [guideOpen, setGuideOpen] = useState(false);
 
   const validate = async () => {
     setError(null); setPreview(null); setWarning(null);
@@ -184,15 +185,43 @@ export function AddViaTokenModal({ onClose, onAdded }) {
     onClose();
   };
 
+  const steps = [
+    {
+      n: "1",
+      title: "Acesse o Meta Developers",
+      desc: <>Vá para <a href="https://developers.facebook.com/apps" target="_blank" rel="noreferrer" style={{ color: "var(--accent-light)", textDecoration: "underline" }}>developers.facebook.com/apps</a> e abra seu App.</>,
+    },
+    {
+      n: "2",
+      title: "Navegue até Instagram",
+      desc: "No menu esquerdo: Instagram → API setup with Instagram Login (ou "API setup with Instagram business login").",
+    },
+    {
+      n: "3",
+      title: "Gere o token",
+      desc: "Na seção Generate access tokens, clique em Generate token ao lado da conta, faça login no Instagram, confirme as permissões e copie o token gerado.",
+    },
+    {
+      n: "4",
+      title: "Cole aqui e valide",
+      desc: "Cole o token no campo abaixo. O sistema automaticamente troca por um token de longa duração (60 dias).",
+    },
+  ];
+
   return (
     <div onClick={(e) => e.target === e.currentTarget && onClose()} style={{
       position: "fixed", inset: 0, zIndex: 2500,
       background: "rgba(0,0,0,0.75)", backdropFilter: "blur(5px)",
       display: "flex", alignItems: "center", justifyContent: "center", padding: 20,
     }}>
-      <div style={{ background: "var(--bg2)", border: "1px solid var(--border2)", borderRadius: 18, width: "100%", maxWidth: 480, boxShadow: "0 24px 64px rgba(0,0,0,0.7)", overflow: "hidden" }}>
+      <div style={{
+        background: "var(--bg2)", border: "1px solid var(--border2)",
+        borderRadius: 18, width: "100%", maxWidth: 500,
+        maxHeight: "90vh", display: "flex", flexDirection: "column",
+        boxShadow: "0 24px 64px rgba(0,0,0,0.7)", overflow: "hidden",
+      }}>
         {/* Header */}
-        <div style={{ padding: "18px 20px 16px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ padding: "18px 20px 16px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
           <div>
             <div style={{ fontWeight: 700, fontSize: 16 }}>🔐 Adicionar via Access Token</div>
             <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 3 }}>Token gerado no Meta Developers</div>
@@ -200,16 +229,47 @@ export function AddViaTokenModal({ onClose, onAdded }) {
           <button onClick={onClose} style={{ background: "none", color: "var(--muted)", fontSize: 22, padding: "0 4px", lineHeight: 1 }}>×</button>
         </div>
 
-        <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
-          {/* Instruções */}
-          <div style={{ padding: "12px 14px", background: "rgba(124,92,252,0.08)", borderRadius: 10, border: "1px solid rgba(124,92,252,0.2)", fontSize: 12, color: "var(--muted)", lineHeight: 1.8 }}>
-            <div style={{ fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>📋 Como gerar o token:</div>
-            <ol style={{ margin: 0, paddingLeft: 18 }}>
-              <li>Acesse <a href="https://developers.facebook.com/apps" target="_blank" rel="noreferrer" style={{ color: "var(--accent-light)" }}>Meta Developers</a> → seu App</li>
-              <li>Menu esquerdo: <strong style={{ color: "var(--text)" }}>Instagram → API setup with Instagram Login</strong></li>
-              <li>Clique em <strong style={{ color: "var(--text)" }}>Generate token</strong> ao lado da conta</li>
-              <li>Faça login, confirme permissões e copie o token</li>
-            </ol>
+        {/* Corpo com scroll */}
+        <div style={{ overflowY: "auto", flex: 1, padding: 20, display: "flex", flexDirection: "column", gap: 16 }}>
+
+          {/* Guia passo a passo colapsável */}
+          <div style={{ borderRadius: 10, border: "1px solid rgba(124,92,252,0.25)", overflow: "hidden" }}>
+            <button
+              onClick={() => setGuideOpen((v) => !v)}
+              style={{
+                width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center",
+                padding: "11px 14px", background: "rgba(124,92,252,0.08)",
+                fontSize: 13, fontWeight: 600, color: "var(--text)",
+              }}
+            >
+              <span>📋 Como gerar o token no Meta Developers</span>
+              <span style={{ fontSize: 16, color: "var(--muted)", transform: guideOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.2s" }}>▾</span>
+            </button>
+            {guideOpen && (
+              <div style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 12, background: "rgba(124,92,252,0.04)" }}>
+                {steps.map((s) => (
+                  <div key={s.n} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                    <div style={{
+                      width: 24, height: 24, borderRadius: "50%", flexShrink: 0,
+                      background: "var(--accent)", display: "flex", alignItems: "center",
+                      justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#fff",
+                    }}>{s.n}</div>
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text)", marginBottom: 2 }}>{s.title}</div>
+                      <div style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.6 }}>{s.desc}</div>
+                    </div>
+                  </div>
+                ))}
+
+                {/* Dicas importantes */}
+                <div style={{ marginTop: 4, padding: "10px 12px", background: "rgba(245,158,11,0.07)", borderRadius: 8, border: "1px solid rgba(245,158,11,0.2)", fontSize: 11, color: "var(--muted)", lineHeight: 1.7 }}>
+                  <div style={{ fontWeight: 700, color: "var(--warning)", marginBottom: 4 }}>⚠️ Dicas importantes</div>
+                  <div>• O token gerado no dashboard é <strong style={{ color: "var(--text)" }}>short-lived (1 hora)</strong>. O sistema troca automaticamente por um de <strong style={{ color: "var(--text)" }}>60 dias</strong>.</div>
+                  <div>• Permissões necessárias no seu App: <code style={{ fontSize: 10, background: "var(--bg3)", padding: "1px 5px", borderRadius: 4 }}>instagram_business_basic</code> e <code style={{ fontSize: 10, background: "var(--bg3)", padding: "1px 5px", borderRadius: 4 }}>instagram_business_content_publish</code>.</div>
+                  <div>• Após validar, você verá os dados da conta antes de confirmar.</div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Token input */}
@@ -260,38 +320,43 @@ export function AddViaTokenModal({ onClose, onAdded }) {
               <div style={{ fontSize: 11, fontWeight: 700, color: "var(--success)", marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>✓ Conta encontrada</div>
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 {preview.profile_picture
-                  ? <img src={preview.profile_picture} alt="" style={{ width: 44, height: 44, borderRadius: "50%", objectFit: "cover", border: "2px solid var(--border2)", flexShrink: 0 }} />
-                  : <div style={{ width: 44, height: 44, borderRadius: "50%", background: "linear-gradient(135deg,#7c5cfc,#e040fb)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 18, color: "#fff", flexShrink: 0 }}>{(preview.username || "?")[0].toUpperCase()}</div>}
-                <div>
-                  <div style={{ fontWeight: 700 }}>{preview.name || preview.username}</div>
+                  ? <img src={preview.profile_picture} alt="" style={{ width: 48, height: 48, borderRadius: "50%", objectFit: "cover", border: "2px solid var(--border2)", flexShrink: 0 }} />
+                  : <div style={{ width: 48, height: 48, borderRadius: "50%", background: "linear-gradient(135deg,#7c5cfc,#e040fb)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 20, color: "#fff", flexShrink: 0 }}>{(preview.username || "?")[0].toUpperCase()}</div>}
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>{preview.name || preview.username}</div>
                   <div style={{ fontSize: 12, color: "var(--muted)" }}>@{preview.username}</div>
-                  <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: 6, marginTop: 5, flexWrap: "wrap" }}>
                     <span className="badge badge-purple" style={{ fontSize: 10 }}>{preview.account_type}</span>
-                    <span className="badge badge-success" style={{ fontSize: 10 }}>
-                      {preview.token_duration === "long-lived" ? "✓ Token 60 dias" : "⚠ Token curto"}
+                    <span className="badge" style={{ fontSize: 10, background: preview.token_duration === "long-lived" ? "rgba(34,197,94,0.12)" : "rgba(245,158,11,0.12)", color: preview.token_duration === "long-lived" ? "var(--success)" : "var(--warning)", border: `1px solid ${preview.token_duration === "long-lived" ? "rgba(34,197,94,0.3)" : "rgba(245,158,11,0.3)"}` }}>
+                      {preview.token_duration === "long-lived" ? "✓ Token 60 dias" : "⚠ Token curto (1h)"}
                     </span>
                   </div>
+                  {preview.followers_count != null && (
+                    <div style={{ marginTop: 6, fontSize: 11, color: "var(--muted)" }}>
+                      👥 {preview.followers_count.toLocaleString("pt-BR")} seguidores · 📸 {preview.media_count ?? "—"} posts
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
           )}
+        </div>
 
-          {/* Botões */}
-          <div style={{ display: "flex", gap: 10 }}>
-            {!preview ? (
-              <>
-                <button className="btn btn-primary" style={{ flex: 1 }} onClick={validate} disabled={loading || !token.trim()}>
-                  {loading ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Validando...</> : "Validar token"}
-                </button>
-                <button className="btn btn-ghost" onClick={onClose} disabled={loading}>Cancelar</button>
-              </>
-            ) : (
-              <>
-                <button className="btn btn-primary" style={{ flex: 1 }} onClick={confirm}>✓ Confirmar e adicionar</button>
-                <button className="btn btn-ghost" onClick={() => { setPreview(null); setWarning(null); }}>Corrigir</button>
-              </>
-            )}
-          </div>
+        {/* Footer fixo com botões */}
+        <div style={{ padding: "14px 20px", borderTop: "1px solid var(--border)", display: "flex", gap: 10, flexShrink: 0 }}>
+          {!preview ? (
+            <>
+              <button className="btn btn-primary" style={{ flex: 1 }} onClick={validate} disabled={loading || !token.trim()}>
+                {loading ? <><span className="spinner" style={{ width: 14, height: 14 }} /> Validando...</> : "Validar token"}
+              </button>
+              <button className="btn btn-ghost" onClick={onClose} disabled={loading}>Cancelar</button>
+            </>
+          ) : (
+            <>
+              <button className="btn btn-primary" style={{ flex: 1 }} onClick={confirm}>✓ Confirmar e adicionar</button>
+              <button className="btn btn-ghost" onClick={() => { setPreview(null); setWarning(null); }}>Corrigir</button>
+            </>
+          )}
         </div>
       </div>
     </div>
