@@ -5,7 +5,10 @@
 
 import { getStore } from "@netlify/blobs";
 
-const GRAPH          = "https://graph.facebook.com/v21.0";
+const GRAPH_FB       = "https://graph.facebook.com/v21.0";
+const GRAPH_IG       = "https://graph.instagram.com";
+function isIGToken(t) { return t?.startsWith('IGAA'); }
+function graph(t)    { return isIGToken(t) ? GRAPH_IG : GRAPH_FB; }
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || process.env.URL || "";
 const sleep          = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -30,7 +33,7 @@ async function checkContainer(creationId, token) {
   for (let i = 0; i < 3; i++) {
     if (i > 0) await sleep(3000);
     try {
-      const r = await fetch(`${GRAPH}/${creationId}?fields=status_code&access_token=${token}`);
+      const r = await fetch(`${graph(token)}/${creationId}?fields=status_code&access_token=${token}`);
       const d = await r.json();
       if (d.error) return { ready: false, expired: true, error: d.error.message };
       if (d.status_code === "FINISHED") return { ready: true };
@@ -48,7 +51,7 @@ async function tryPublish(accountId, creationId, token, username) {
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) await sleep(4000);
     try {
-      const pRes  = await fetch(`${GRAPH}/${accountId}/media_publish`, {
+      const pRes  = await fetch(`${graph(token)}/${accountId}/media_publish`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({ creation_id: creationId, access_token: token }),

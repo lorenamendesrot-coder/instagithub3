@@ -1,5 +1,8 @@
 // publish.mjs
-const GRAPH          = "https://graph.facebook.com/v21.0";
+const GRAPH_FB       = "https://graph.facebook.com/v21.0";
+const GRAPH_IG       = "https://graph.instagram.com";
+function isIGToken(t) { return t?.startsWith('IGAA'); }
+function graph(t)    { return isIGToken(t) ? GRAPH_IG : GRAPH_FB; }
 const sleep          = (ms) => new Promise((r) => setTimeout(r, ms));
 const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || process.env.URL || "";
 
@@ -72,7 +75,7 @@ async function waitForContainer(id, token) {
   for (let i = 0; i < 5; i++) {
     await sleep(4000);
     try {
-      const r = await fetch(`${GRAPH}/${id}?fields=status_code&access_token=${token}`);
+      const r = await fetch(`${graph(token)}/${id}?fields=status_code&access_token=${token}`);
       const d = await r.json();
       if (d.status_code === "FINISHED") return { ready: true };
       if (d.status_code === "ERROR")    return { ready: false, error: "Instagram: erro no processamento do vídeo" };
@@ -103,7 +106,7 @@ async function publishOne({ account, media_url, media_type, post_type, caption }
   }
 
   try {
-    const cRes  = await fetch(`${GRAPH}/${account.id}/media`, {
+    const cRes  = await fetch(`${graph(token)}/${account.id}/media`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -117,7 +120,7 @@ async function publishOne({ account, media_url, media_type, post_type, caption }
       if (!result.ready)  return { success: false, error: result.error };
     }
 
-    const pRes  = await fetch(`${GRAPH}/${account.id}/media_publish`, {
+    const pRes  = await fetch(`${graph(token)}/${account.id}/media_publish`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ creation_id: cData.id, access_token: token }),
